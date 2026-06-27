@@ -24,6 +24,7 @@ import {
   Store as StoreIcon,
 } from "lucide-react";
 import { sendChatPrompt } from "./api/chat";
+import { getCategories, getExamplesByCategory, searchExamples } from "./api/examples";
 import { exportEvalCase, getRecentFeedback, submitFeedback } from "./api/feedback";
 import {
   archiveKnowledgeItem,
@@ -57,6 +58,7 @@ import type {
   ChatMessage,
   ChatResponse,
   FeedbackItem,
+  KnowledgeExample,
   KnowledgeOpsItem,
   KnowledgePayload,
   KnowledgePublishHistoryItem,
@@ -117,6 +119,10 @@ export default function App() {
   const [knowledgeTotal, setKnowledgeTotal] = useState(0);
   const [knowledgeStatus, setKnowledgeStatus] = useState("");
   const [knowledgePublishHistory, setKnowledgePublishHistory] = useState<KnowledgePublishHistoryItem[]>([]);
+  const [knowledgeCategories, setKnowledgeCategories] = useState<string[]>([]);
+  const [selectedKnowledgeCategory, setSelectedKnowledgeCategory] = useState("");
+  const [knowledgeExamples, setKnowledgeExamples] = useState<KnowledgeExample[]>([]);
+  const [knowledgeExamplesStatus, setKnowledgeExamplesStatus] = useState("");
 
   const selectedStore = stores.find((store) => store.id === selectedStoreId) ?? stores[0];
   const activeOrder = orders.find((order) => order.id === activeOrderId) ?? orders[0] ?? null;
@@ -152,6 +158,7 @@ export default function App() {
     void refreshOpsData();
     void refreshKnowledgeItems();
     void refreshKnowledgePublishHistory();
+    void refreshKnowledgeExamples();
   }, []);
 
   useGSAP(
@@ -433,6 +440,43 @@ export default function App() {
     setKnowledgePublishHistory(result.items);
   }
 
+  async function refreshKnowledgeExamples(category?: string) {
+    const categoryResult = await getCategories();
+    const categories = categoryResult.categories;
+    const nextCategory = category || selectedKnowledgeCategory || categories[0] || "";
+
+    setKnowledgeCategories(categories);
+    setSelectedKnowledgeCategory(nextCategory);
+
+    if (!nextCategory) {
+      setKnowledgeExamples([]);
+      setKnowledgeExamplesStatus("正式知识库暂无分类");
+      return;
+    }
+
+    const examplesResult = await getExamplesByCategory(nextCategory, 50);
+    setKnowledgeExamples(examplesResult.examples);
+    setKnowledgeExamplesStatus(`已加载 ${examplesResult.examples.length} 条正式知识`);
+  }
+
+  async function selectKnowledgeCategory(category: string) {
+    setSelectedKnowledgeCategory(category);
+    const result = await getExamplesByCategory(category, 50);
+    setKnowledgeExamples(result.examples);
+    setKnowledgeExamplesStatus(`已加载 ${result.examples.length} 条正式知识`);
+  }
+
+  async function searchKnowledgeExamples(keyword: string) {
+    const normalizedKeyword = keyword.trim();
+    if (!normalizedKeyword) {
+      await refreshKnowledgeExamples(selectedKnowledgeCategory);
+      return;
+    }
+    const result = await searchExamples(normalizedKeyword, 50);
+    setKnowledgeExamples(result.results);
+    setKnowledgeExamplesStatus(`搜索到 ${result.results.length} 条正式知识`);
+  }
+
   async function createKnowledge(payload: KnowledgePayload) {
     await createKnowledgeItem(payload);
     setKnowledgeStatus("已保存草稿");
@@ -570,8 +614,15 @@ export default function App() {
             total={knowledgeTotal}
             statusText={knowledgeStatus}
             publishHistory={knowledgePublishHistory}
+            categories={knowledgeCategories}
+            selectedCategory={selectedKnowledgeCategory}
+            examples={knowledgeExamples}
+            examplesStatus={knowledgeExamplesStatus}
             onBack={() => navigate("home")}
             onRefresh={refreshKnowledgeItems}
+            onRefreshExamples={() => refreshKnowledgeExamples(selectedKnowledgeCategory)}
+            onCategoryChange={selectKnowledgeCategory}
+            onSearchExamples={searchKnowledgeExamples}
             onCreate={createKnowledge}
             onUpdate={updateKnowledge}
             onArchive={archiveKnowledge}

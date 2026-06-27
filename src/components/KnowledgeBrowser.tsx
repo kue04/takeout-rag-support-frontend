@@ -8,7 +8,7 @@ type KnowledgeBrowserProps = {
   examples: KnowledgeExample[];
   onCategoryChange: (category: string) => void;
   onSearch: (keyword: string) => Promise<void>;
-  onUseQuestion: (question: string) => void;
+  onUseExample: (example: KnowledgeExample) => void;
 };
 
 export default function KnowledgeBrowser({
@@ -17,7 +17,7 @@ export default function KnowledgeBrowser({
   examples,
   onCategoryChange,
   onSearch,
-  onUseQuestion,
+  onUseExample,
 }: KnowledgeBrowserProps) {
   const [keyword, setKeyword] = useState("");
 
@@ -83,10 +83,10 @@ export default function KnowledgeBrowser({
                 <button
                   className="inline-flex items-center gap-1 rounded-work border border-line bg-panel px-2 py-1 text-[11px] font-extrabold text-ink hover:border-leaf"
                   type="button"
-                  onClick={() => onUseQuestion(example.question)}
+                  onClick={() => onUseExample(example)}
                 >
                   <PlayCircle size={13} />
-                  作为问题测试
+                  作为草稿
                 </button>
               </div>
               <h3 className="text-sm font-extrabold">{example.question}</h3>

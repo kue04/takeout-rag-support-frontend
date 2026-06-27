@@ -1,15 +1,23 @@
 import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { EmptyState } from "../../components/EmptyState";
-import type { KnowledgeOpsItem, KnowledgePayload, KnowledgePublishHistoryItem } from "../../types/api";
+import KnowledgeBrowser from "../../components/KnowledgeBrowser";
+import type { KnowledgeExample, KnowledgeOpsItem, KnowledgePayload, KnowledgePublishHistoryItem } from "../../types/api";
 
 export function KnowledgeOpsView({
   items,
   total,
   statusText,
   publishHistory,
+  categories,
+  selectedCategory,
+  examples,
+  examplesStatus,
   onBack,
   onRefresh,
+  onRefreshExamples,
+  onCategoryChange,
+  onSearchExamples,
   onCreate,
   onUpdate,
   onArchive,
@@ -23,8 +31,15 @@ export function KnowledgeOpsView({
   total: number;
   statusText: string;
   publishHistory: KnowledgePublishHistoryItem[];
+  categories: string[];
+  selectedCategory: string;
+  examples: KnowledgeExample[];
+  examplesStatus: string;
   onBack: () => void;
   onRefresh: (filters?: { status?: string; keyword?: string }) => Promise<void>;
+  onRefreshExamples: () => Promise<void>;
+  onCategoryChange: (category: string) => Promise<void>;
+  onSearchExamples: (keyword: string) => Promise<void>;
   onCreate: (payload: KnowledgePayload) => Promise<void>;
   onUpdate: (id: number, payload: KnowledgePayload) => Promise<void>;
   onArchive: (id: number) => Promise<void>;
@@ -43,6 +58,7 @@ export function KnowledgeOpsView({
   const [editingId, setEditingId] = useState<number | null>(null);
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState("");
+  const [activeList, setActiveList] = useState<"current" | "ops">("current");
 
   function fillForm(item: KnowledgeOpsItem) {
     setEditingId(item.id);
@@ -51,6 +67,16 @@ export function KnowledgeOpsView({
       answer: item.answer,
       category: item.category,
       intent: item.intent,
+    });
+  }
+
+  function useExampleAsDraft(example: KnowledgeExample) {
+    setEditingId(null);
+    setForm({
+      question: example.question,
+      answer: example.answer,
+      category: example.category ?? selectedCategory,
+      intent: "",
     });
   }
 
@@ -151,25 +177,61 @@ export function KnowledgeOpsView({
         <div className="rounded-[16px] bg-white p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="text-base font-black">知识条目</h2>
-              <p className="mt-1 text-xs text-muted">共 {total} 条运营草稿/审核记录</p>
+              <h2 className="text-base font-black">{activeList === "current" ? "当前正式知识库" : "知识条目"}</h2>
+              <p className="mt-1 text-xs text-muted">
+                {activeList === "current" ? examplesStatus || "从正式知识库读取内容" : `共 ${total} 条运营草稿/审核记录`}
+              </p>
             </div>
-            <div className="flex gap-2">
-              <select className="h-9 rounded-work border border-line px-2 text-sm" value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="">全部状态</option>
-                <option value="draft">draft</option>
-                <option value="approved">approved</option>
-                <option value="published">published</option>
-                <option value="rejected">rejected</option>
-                <option value="archived">archived</option>
-              </select>
-              <input className="h-9 rounded-work border border-line px-2 text-sm" placeholder="关键词" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
-              <button className="rounded-work border border-line px-3 text-sm font-black" type="button" onClick={() => void onRefresh({ status, keyword })}>
-                筛选
-              </button>
+            <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 overflow-hidden rounded-work border border-line text-sm font-black">
+                <button
+                  className={`px-3 py-2 ${activeList === "current" ? "bg-ink text-white" : "bg-white text-muted"}`}
+                  type="button"
+                  onClick={() => setActiveList("current")}
+                >
+                  正式知识库
+                </button>
+                <button
+                  className={`px-3 py-2 ${activeList === "ops" ? "bg-ink text-white" : "bg-white text-muted"}`}
+                  type="button"
+                  onClick={() => setActiveList("ops")}
+                >
+                  运营草稿
+                </button>
+              </div>
+              {activeList === "current" ? (
+                <button className="rounded-work border border-line px-3 text-sm font-black" type="button" onClick={() => void onRefreshExamples()}>
+                  刷新正式库
+                </button>
+              ) : (
+                <>
+                  <select className="h-9 rounded-work border border-line px-2 text-sm" value={status} onChange={(event) => setStatus(event.target.value)}>
+                    <option value="">全部状态</option>
+                    <option value="draft">draft</option>
+                    <option value="approved">approved</option>
+                    <option value="published">published</option>
+                    <option value="rejected">rejected</option>
+                    <option value="archived">archived</option>
+                  </select>
+                  <input className="h-9 rounded-work border border-line px-2 text-sm" placeholder="关键词" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
+                  <button className="rounded-work border border-line px-3 text-sm font-black" type="button" onClick={() => void onRefresh({ status, keyword })}>
+                    筛选
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
+          {activeList === "current" ? (
+            <KnowledgeBrowser
+              categories={categories}
+              selectedCategory={selectedCategory}
+              examples={examples}
+              onCategoryChange={onCategoryChange}
+              onSearch={onSearchExamples}
+              onUseExample={useExampleAsDraft}
+            />
+          ) : (
           <div className="space-y-3">
             {items.length ? (
               items.map((item) => (
@@ -203,6 +265,7 @@ export function KnowledgeOpsView({
               <EmptyState title="暂无知识运营条目" text="先新增一条知识草稿，或调整筛选条件。" compact />
             )}
           </div>
+          )}
         </div>
       </div>
     </section>
