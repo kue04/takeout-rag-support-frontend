@@ -81,6 +81,7 @@ const userStorageKey = "takeout-rag-user-id";
 const supportSessionStorageKey = "takeout-rag-support-sessions";
 const userAddress = "杭州西湖区文三路 168 号";
 const retrievalMode: RetrievalMode = "hybrid";
+const knowledgeExampleLimit = 20;
 
 export default function App() {
   const pageRef = useRef<HTMLElement | null>(null);
@@ -441,29 +442,39 @@ export default function App() {
   }
 
   async function refreshKnowledgeExamples(category?: string) {
-    const categoryResult = await getCategories();
-    const categories = categoryResult.categories;
-    const nextCategory = category || selectedKnowledgeCategory || categories[0] || "";
+    try {
+      const categoryResult = await getCategories();
+      const categories = categoryResult.categories;
+      const nextCategory = category || selectedKnowledgeCategory || categories[0] || "";
 
-    setKnowledgeCategories(categories);
-    setSelectedKnowledgeCategory(nextCategory);
+      setKnowledgeCategories(categories);
+      setSelectedKnowledgeCategory(nextCategory);
 
-    if (!nextCategory) {
+      if (!nextCategory) {
+        setKnowledgeExamples([]);
+        setKnowledgeExamplesStatus("正式知识库暂无分类");
+        return;
+      }
+
+      const examplesResult = await getExamplesByCategory(nextCategory, knowledgeExampleLimit);
+      setKnowledgeExamples(examplesResult.examples);
+      setKnowledgeExamplesStatus(`已加载 ${examplesResult.examples.length} 条正式知识`);
+    } catch (error) {
       setKnowledgeExamples([]);
-      setKnowledgeExamplesStatus("正式知识库暂无分类");
-      return;
+      setKnowledgeExamplesStatus(getErrorMessage(error, "正式知识库读取失败"));
     }
-
-    const examplesResult = await getExamplesByCategory(nextCategory, 50);
-    setKnowledgeExamples(examplesResult.examples);
-    setKnowledgeExamplesStatus(`已加载 ${examplesResult.examples.length} 条正式知识`);
   }
 
   async function selectKnowledgeCategory(category: string) {
-    setSelectedKnowledgeCategory(category);
-    const result = await getExamplesByCategory(category, 50);
-    setKnowledgeExamples(result.examples);
-    setKnowledgeExamplesStatus(`已加载 ${result.examples.length} 条正式知识`);
+    try {
+      setSelectedKnowledgeCategory(category);
+      const result = await getExamplesByCategory(category, knowledgeExampleLimit);
+      setKnowledgeExamples(result.examples);
+      setKnowledgeExamplesStatus(`已加载 ${result.examples.length} 条正式知识`);
+    } catch (error) {
+      setKnowledgeExamples([]);
+      setKnowledgeExamplesStatus(getErrorMessage(error, "正式知识库读取失败"));
+    }
   }
 
   async function searchKnowledgeExamples(keyword: string) {
@@ -472,9 +483,14 @@ export default function App() {
       await refreshKnowledgeExamples(selectedKnowledgeCategory);
       return;
     }
-    const result = await searchExamples(normalizedKeyword, 50);
-    setKnowledgeExamples(result.results);
-    setKnowledgeExamplesStatus(`搜索到 ${result.results.length} 条正式知识`);
+    try {
+      const result = await searchExamples(normalizedKeyword, knowledgeExampleLimit);
+      setKnowledgeExamples(result.results);
+      setKnowledgeExamplesStatus(`搜索到 ${result.results.length} 条正式知识`);
+    } catch (error) {
+      setKnowledgeExamples([]);
+      setKnowledgeExamplesStatus(getErrorMessage(error, "正式知识库搜索失败"));
+    }
   }
 
   async function createKnowledge(payload: KnowledgePayload) {
