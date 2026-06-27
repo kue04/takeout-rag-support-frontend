@@ -10,7 +10,7 @@
 
 - 顶部平台导航：位置、搜索、订单、购物车、后端状态。
 - 主区域：根据当前视图展示首页、店铺详情、订单列表、订单详情或客服会话。
-- 客服视图：左侧订单上下文，中间聊天，右侧 RAG 解释侧栏。
+- 客服视图：左侧订单上下文和预置场景，中间聊天与回答依据，右侧 RAG 诊断侧栏。
 
 移动端：
 
@@ -34,7 +34,17 @@
 - Cart bar：商品数、总价、配送费、去结算。
 - Order timeline：已支付、商家备餐、骑手配送、已送达。
 - Support chat：订单问题快捷按钮、用户消息、客服回复、复制回复。
-- RAG drawer/sidebar：检索证据、分数拆解、prompt context、trace、复制报告。
+- Answer basis：主证据、引用片段、订单工具结果、规则兜底或人工接管状态。
+- Diagnostic tabs：流程时间线、工具调用、证据溯源、上下文记忆、原始 JSON。
+- RAG drawer/sidebar：桌面端固定侧栏，移动端抽屉，支持复制调试报告。
+
+## Diagnostic Information Architecture
+
+- 流程时间线：优先展示 `full_trace` 的 step、status、latency、input/output summary；缺失时回退旧 `trace`。
+- 工具调用：展示订单查询、退款查询、人工接管等 `tool_results`。
+- 证据溯源：优先展示 `evidence_citations`，补充分数、版本、primary/supporting 和 quote。
+- 上下文记忆：展示短期摘要、订单状态、长期画像字段、运行指标和 recent bad cases。
+- 原始 JSON：展示完整后端响应，方便面试演示和联调排查。
 
 ## Motion
 

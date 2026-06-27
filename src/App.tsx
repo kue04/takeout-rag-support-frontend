@@ -72,8 +72,11 @@ gsap.registerPlugin(useGSAP);
 
 type View = "home" | "store" | "checkout" | "orders" | "orderDetail" | "support" | "knowledge" | "showcase";
 type Cart = Record<string, number>;
+type SupportSessionMap = Record<string, string>;
 
 const storageKey = "takeout-rag-orders";
+const userStorageKey = "takeout-rag-user-id";
+const supportSessionStorageKey = "takeout-rag-support-sessions";
 const userAddress = "杭州西湖区文三路 168 号";
 const retrievalMode: RetrievalMode = "hybrid";
 
@@ -84,6 +87,8 @@ export default function App() {
   const [selectedStoreId, setSelectedStoreId] = useState(stores[0].id);
   const [cart, setCart] = useState<Cart>({});
   const [orders, setOrders] = useState<TakeoutOrder[]>(() => loadOrders());
+  const [userId] = useState(() => getOrCreateUserId());
+  const [supportSessions, setSupportSessions] = useState<SupportSessionMap>(() => loadSupportSessions());
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [cartPulseKey, setCartPulseKey] = useState(0);
@@ -115,6 +120,7 @@ export default function App() {
 
   const selectedStore = stores.find((store) => store.id === selectedStoreId) ?? stores[0];
   const activeOrder = orders.find((order) => order.id === activeOrderId) ?? orders[0] ?? null;
+  const activeSessionId = activeOrder ? supportSessions[activeOrder.id] ?? null : null;
   const storeDishes = dishes.filter((dish) => dish.storeId === selectedStore.id);
   const cartItems = getCartItems(cart);
   const cartSubtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -278,6 +284,7 @@ export default function App() {
     ]);
 
     const messageWithContext = buildOrderContextMessage(activeOrder, normalizedQuestion);
+    const currentSessionId = supportSessions[activeOrder.id] ?? null;
     const retrievalPayload = {
       query: normalizedQuestion,
       mode: retrievalMode,
@@ -287,7 +294,12 @@ export default function App() {
 
     try {
       const [chatResult, searchResult, previewResult] = await Promise.allSettled([
-        sendChatPrompt(messageWithContext),
+        sendChatPrompt({
+          message: messageWithContext,
+          user_id: userId,
+          session_id: currentSessionId,
+          order_id: activeOrder.id,
+        }),
         searchRetrieval(retrievalPayload),
         previewRetrievalPrompt(retrievalPayload),
       ]);
@@ -306,6 +318,15 @@ export default function App() {
 
       if (chatResult.status === "fulfilled") {
         setLatestDiagnostics(chatResult.value);
+
+        if (chatResult.value.session_id) {
+          setSupportSessions((current) => {
+            const next = { ...current, [activeOrder.id]: chatResult.value.session_id as string };
+            saveSupportSessions(next);
+            return next;
+          });
+        }
+
         setMessages((current) => [
           ...current,
           {
@@ -331,6 +352,30 @@ export default function App() {
   function openSupport(order: TakeoutOrder) {
     setActiveOrderId(order.id);
     navigate("support");
+  }
+
+  function selectSupportScenario(scenario: { id: string; status: OrderStatus; deliveryStatus: string }) {
+    const baseOrder = activeOrder ?? orders[0] ?? createScenarioOrder(scenario);
+    const scenarioOrder: TakeoutOrder = {
+      ...baseOrder,
+      id: scenario.id,
+      status: scenario.status,
+      deliveryStatus: scenario.deliveryStatus,
+      createdAt: baseOrder.createdAt || new Date().toLocaleString("zh-CN", { hour12: false }),
+    };
+
+    setOrders((current) => [scenarioOrder, ...current.filter((order) => order.id !== scenarioOrder.id)]);
+    setActiveOrderId(scenarioOrder.id);
+    setMessages([
+      {
+        id: "welcome",
+        role: "assistant",
+        content: "您好，请选择订单问题，我会结合订单信息为您处理。",
+      },
+    ]);
+    setRetrievalResults([]);
+    setPromptPreview(null);
+    setLatestDiagnostics(null);
   }
 
   async function copyDebugReport() {
@@ -495,6 +540,8 @@ export default function App() {
         {view === "support" ? (
           <SupportView
             order={activeOrder}
+            userId={userId}
+            sessionId={activeSessionId}
             messages={messages}
             retrievalResults={retrievalResults}
             promptPreview={promptPreview}
@@ -513,6 +560,7 @@ export default function App() {
             recentFeedback={recentFeedback}
             opsMetrics={opsMetrics}
             onCopyEvalCase={copyEvalCase}
+            onSelectScenario={selectSupportScenario}
           />
         ) : null}
 
@@ -1292,6 +1340,30 @@ function loadOrders(): TakeoutOrder[] {
   }
 }
 
+function getOrCreateUserId() {
+  const existing = localStorage.getItem(userStorageKey);
+  if (existing) {
+    return existing;
+  }
+
+  const userId = `demo_user_${crypto.randomUUID()}`;
+  localStorage.setItem(userStorageKey, userId);
+  return userId;
+}
+
+function loadSupportSessions(): SupportSessionMap {
+  try {
+    const raw = localStorage.getItem(supportSessionStorageKey);
+    return raw ? (JSON.parse(raw) as SupportSessionMap) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSupportSessions(sessions: SupportSessionMap) {
+  localStorage.setItem(supportSessionStorageKey, JSON.stringify(sessions));
+}
+
 function buildOrderContextMessage(order: TakeoutOrder, question: string) {
   return `订单上下文：
 订单号：${order.id}
@@ -1301,6 +1373,32 @@ function buildOrderContextMessage(order: TakeoutOrder, question: string) {
 配送状态：${order.deliveryStatus}
 支付金额：¥${order.total.toFixed(1)}
 用户问题：${question}`;
+}
+
+function createScenarioOrder(scenario: { id: string; status: OrderStatus; deliveryStatus: string }): TakeoutOrder {
+  const store = stores[0];
+  const firstDish = dishes.find((dish) => dish.storeId === store.id) ?? dishes[0];
+
+  return {
+    id: scenario.id,
+    storeId: store.id,
+    storeName: store.name,
+    items: [
+      {
+        dishId: firstDish.id,
+        name: firstDish.name,
+        quantity: 1,
+        price: firstDish.price,
+      },
+    ],
+    subtotal: firstDish.price,
+    deliveryFee: store.deliveryFee,
+    total: firstDish.price + store.deliveryFee,
+    status: scenario.status,
+    deliveryStatus: scenario.deliveryStatus,
+    address: userAddress,
+    createdAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+  };
 }
 
 function buildDebugReport({
@@ -1326,7 +1424,26 @@ ${results
 
 ## Trace
 \`\`\`json
-${JSON.stringify(diagnostics?.trace ?? {}, null, 2)}
+${JSON.stringify(diagnostics?.full_trace ?? diagnostics?.trace ?? {}, null, 2)}
+\`\`\`
+
+## Session
+\`\`\`json
+${JSON.stringify(
+  {
+    user_id: diagnostics?.user_id,
+    session_id: diagnostics?.session_id,
+    order_id: diagnostics?.order_id,
+    context_used: diagnostics?.context_used,
+    memory_snapshot: diagnostics?.memory_snapshot,
+    intent_analysis: diagnostics?.intent_analysis,
+    safety_status: diagnostics?.safety_status,
+    tool_results: diagnostics?.tool_results,
+    evidence_citations: diagnostics?.evidence_citations,
+  },
+  null,
+  2,
+)}
 \`\`\`
 
 ## Prompt

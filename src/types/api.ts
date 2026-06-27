@@ -33,6 +33,92 @@ export type PromptContextItem = RetrievalResult & {
   mixed_supporting_intent?: boolean;
 };
 
+export type ChatRequest = {
+  message: string;
+  user_id?: string;
+  session_id?: string | null;
+  order_id?: string | null;
+};
+
+export type IntentAnalysis = {
+  primary_intent?: string;
+  secondary_intents?: string[];
+  risk_level?: "low" | "medium" | "high" | "critical" | string;
+  routing?: string;
+  intents?: Array<{
+    name: string;
+    confidence: number;
+    risk_level: string;
+    evidence?: string[];
+  }>;
+};
+
+export type ContextUsed = {
+  session_id?: string;
+  recent_message_count?: number;
+  summary_chars?: number;
+  fact_count?: number;
+  redis_enabled?: boolean;
+};
+
+export type SafetyStatus = {
+  passed?: boolean;
+  blocked?: boolean;
+  issues?: string[];
+  fallback_applied?: boolean;
+};
+
+export type ToolResult = {
+  tool_name?: string;
+  status?: string;
+  input?: unknown;
+  output?: unknown;
+  error_type?: string | null;
+  latency_ms?: number;
+  retryable?: boolean;
+};
+
+export type EvidenceCitation = {
+  evidence_id?: string;
+  source_type?: string;
+  category?: string;
+  intent?: string;
+  risk_level?: string;
+  version?: string | number;
+  score?: number;
+  evidence_role?: "primary" | "supporting" | string;
+  quote?: string;
+  title?: string;
+};
+
+export type FullTraceStep = {
+  step?: string;
+  status?: string;
+  input_summary?: string;
+  output_summary?: string;
+  latency_ms?: number;
+  metadata?: Record<string, unknown>;
+};
+
+export type MemorySnapshot = {
+  short_term_summary?: string;
+  session_summary?: string;
+  current_order_state?: string;
+  last_primary_evidence?: unknown;
+  long_term_memory?: Record<string, unknown>;
+  user_memory?: Record<string, unknown>;
+  used_long_term_memory?: boolean;
+  used_fields?: string[];
+};
+
+export type HandoffTicket = {
+  id?: string;
+  ticket_id?: string;
+  reason?: string;
+  context?: unknown;
+  context_summary?: string;
+};
+
 export type ChatTrace = {
   retrieval_count?: number;
   request_id?: string;
@@ -44,6 +130,11 @@ export type ChatTrace = {
   failure_stage?: string;
   used_fallback_prompt?: boolean;
   fallback_reason?: string;
+  user_id?: string;
+  session_id?: string;
+  order_id?: string | null;
+  intent_analysis?: IntentAnalysis;
+  safety_status?: SafetyStatus;
 };
 
 export type ManualJudgment = {
@@ -63,6 +154,19 @@ export type EvaluationMetrics = {
 
 export type ChatResponse = {
   reply: string;
+  answer_basis?: string | Record<string, unknown>;
+  evidence_citations?: EvidenceCitation[];
+  tool_results?: ToolResult[];
+  memory_snapshot?: MemorySnapshot;
+  decision_trace?: unknown;
+  full_trace?: FullTraceStep[];
+  handoff_ticket?: HandoffTicket | null;
+  session_id?: string;
+  user_id?: string;
+  order_id?: string | null;
+  intent_analysis?: IntentAnalysis;
+  context_used?: ContextUsed;
+  safety_status?: SafetyStatus;
   confidence_score?: number;
   final_prompt?: string;
   retrieved_documents?: string[];

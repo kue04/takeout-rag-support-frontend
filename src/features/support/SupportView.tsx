@@ -1,19 +1,39 @@
-import { useState } from "react";
-import { ArrowLeft, Bot, Clipboard, MessageCircle, X } from "lucide-react";
+import { useRef, useState } from "react";
+import { useGSAP } from "@gsap/react";
+import gsap from "gsap";
+import { ArrowLeft, BookOpen, Bot, Brain, Clipboard, FileJson, History, MessageCircle, ShieldAlert, Wrench, X } from "lucide-react";
 import { EmptyState } from "../../components/EmptyState";
 import { Score } from "../../components/Score";
-import { supportQuestions, type TakeoutOrder } from "../../data/marketplace";
+import { supportQuestions, type OrderStatus, type TakeoutOrder } from "../../data/marketplace";
 import type {
   ChatMessage,
   ChatResponse,
   FeedbackItem,
+  IntentAnalysis,
   OpsMetrics,
   RetrievalPromptPreviewResponse,
   RetrievalResult,
+  SafetyStatus,
 } from "../../types/api";
+
+type SupportScenario = {
+  id: string;
+  label: string;
+  status: OrderStatus;
+  deliveryStatus: string;
+};
+
+const supportScenarios: SupportScenario[] = [
+  { id: "DEMO-PAID", label: "未接单", status: "paid", deliveryStatus: "订单已支付，商家尚未接单" },
+  { id: "DEMO-PREP", label: "商家制作", status: "preparing", deliveryStatus: "商家已接单并开始制作" },
+  { id: "DEMO-RIDER", label: "骑手取餐", status: "delivering", deliveryStatus: "骑手已取餐，正在配送途中" },
+  { id: "DEMO-DONE", label: "已送达", status: "delivered", deliveryStatus: "订单已送达，用户反馈未收到" },
+];
 
 export function SupportView({
   order,
+  userId,
+  sessionId,
   messages,
   retrievalResults,
   promptPreview,
@@ -32,8 +52,11 @@ export function SupportView({
   recentFeedback,
   opsMetrics,
   onCopyEvalCase,
+  onSelectScenario,
 }: {
   order: TakeoutOrder | null;
+  userId: string;
+  sessionId: string | null;
   messages: ChatMessage[];
   retrievalResults: RetrievalResult[];
   promptPreview: RetrievalPromptPreviewResponse | null;
@@ -52,10 +75,28 @@ export function SupportView({
   recentFeedback: FeedbackItem[];
   opsMetrics: OpsMetrics | null;
   onCopyEvalCase: (feedbackId: number) => Promise<void>;
+  onSelectScenario: (scenario: SupportScenario) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [feedbackReason, setFeedbackReason] = useState("");
   const [expectedReply, setExpectedReply] = useState("");
+  const mobileRagRef = useRef<HTMLDivElement | null>(null);
+
+  useGSAP(
+    () => {
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (!isRagOpen || !mobileRagRef.current || reduceMotion) {
+        return;
+      }
+
+      gsap.fromTo(
+        mobileRagRef.current,
+        { opacity: 0, y: 24 },
+        { opacity: 1, y: 0, duration: 0.22, ease: "power2.out" },
+      );
+    },
+    { dependencies: [isRagOpen] },
+  );
 
   async function submitMessage(message: string) {
     const content = message.trim();
@@ -90,6 +131,43 @@ export function SupportView({
             {order.items.map((item) => `${item.name} x${item.quantity}`).join("，")}
           </p>
           <p className="mt-3 text-sm font-black text-amberline">实付 ¥{order.total.toFixed(1)}</p>
+        </div>
+        <div className="mt-3 rounded-work border border-line bg-white p-3 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-black text-ink">会话状态</span>
+            <span
+              className={`rounded-full px-2 py-1 font-black ${
+                sessionId ? "bg-emerald-50 text-leaf" : "bg-subtle text-muted"
+              }`}
+            >
+              {sessionId ? "已接续" : "待创建"}
+            </span>
+          </div>
+          <div className="mt-3 space-y-2">
+            <SessionLine label="user" value={shortId(userId)} fullValue={userId} />
+            <SessionLine label="order" value={order.id} />
+            <SessionLine label="session" value={sessionId ? shortId(sessionId) : "-"} fullValue={sessionId ?? ""} />
+            <SessionLine label="order status" value={order.status} />
+            <SessionLine label="risk" value={getRiskLevel(diagnostics)} />
+            <SessionLine label="long memory" value={getLongMemoryUsed(diagnostics)} />
+          </div>
+        </div>
+        <div className="mt-3 rounded-work border border-line bg-white p-3 text-xs">
+          <p className="font-black text-ink">预置订单场景</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {supportScenarios.map((scenario) => (
+              <button
+                key={scenario.id}
+                className={`rounded-work border px-2 py-2 text-left font-black ${
+                  order.id === scenario.id ? "border-leaf bg-emerald-50 text-leaf" : "border-line bg-subtle text-ink"
+                }`}
+                type="button"
+                onClick={() => onSelectScenario(scenario)}
+              >
+                {scenario.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="mt-4 space-y-2">
           {supportQuestions.map((question) => (
@@ -130,6 +208,7 @@ export function SupportView({
               {apiError}
             </div>
           ) : null}
+          {diagnostics ? <AnswerBasisCard diagnostics={diagnostics} /> : null}
           {diagnostics ? (
             <div className="rounded-work border border-line bg-white p-3 text-xs">
               <div className="flex flex-wrap items-center gap-2">
@@ -194,6 +273,9 @@ export function SupportView({
 
       <div className="hidden lg:block">
         <RagPanel
+          orderId={order.id}
+          userId={userId}
+          sessionId={sessionId}
           results={retrievalResults}
           promptPreview={promptPreview}
           diagnostics={diagnostics}
@@ -208,6 +290,7 @@ export function SupportView({
       {isRagOpen ? (
         <div className="fixed inset-0 z-40 bg-black/35 lg:hidden" onClick={onCloseRag}>
           <div
+            ref={mobileRagRef}
             className="absolute bottom-0 left-0 right-0 max-h-[82vh] overflow-auto rounded-t-[16px] bg-white p-3"
             onClick={(event) => event.stopPropagation()}
           >
@@ -218,6 +301,9 @@ export function SupportView({
               </button>
             </div>
             <RagPanel
+              orderId={order.id}
+              userId={userId}
+              sessionId={sessionId}
               results={retrievalResults}
               promptPreview={promptPreview}
               diagnostics={diagnostics}
@@ -235,6 +321,9 @@ export function SupportView({
 }
 
 function RagPanel({
+  orderId,
+  userId,
+  sessionId,
   results,
   promptPreview,
   diagnostics,
@@ -244,6 +333,9 @@ function RagPanel({
   opsMetrics,
   onCopyEvalCase,
 }: {
+  orderId: string;
+  userId: string;
+  sessionId: string | null;
   results: RetrievalResult[];
   promptPreview: RetrievalPromptPreviewResponse | null;
   diagnostics: ChatResponse | null;
@@ -253,12 +345,37 @@ function RagPanel({
   opsMetrics: OpsMetrics | null;
   onCopyEvalCase: (feedbackId: number) => Promise<void>;
 }) {
+  const contextUsed = diagnostics?.context_used;
+  const intentAnalysis = diagnostics?.intent_analysis;
+  const safetyStatus = diagnostics?.safety_status;
+  const resolvedSessionId = diagnostics?.session_id ?? contextUsed?.session_id ?? sessionId;
+  const resolvedUserId = diagnostics?.user_id ?? userId;
+  const resolvedOrderId = diagnostics?.order_id ?? orderId;
+  const panelRef = useRef<HTMLElement | null>(null);
+  const [activeTab, setActiveTab] = useState<"timeline" | "tools" | "evidence" | "memory" | "json">("timeline");
+
+  useGSAP(
+    () => {
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduceMotion) {
+        return;
+      }
+
+      gsap.fromTo(
+        ".diagnostic-block",
+        { opacity: 0.82, y: 8 },
+        { opacity: 1, y: 0, duration: 0.2, stagger: 0.025, ease: "power2.out" },
+      );
+    },
+    { scope: panelRef, dependencies: [diagnostics?.session_id, diagnostics?.trace?.request_id] },
+  );
+
   return (
-    <aside className="rounded-[16px] bg-white p-4">
+    <aside ref={panelRef} className="rounded-[16px] bg-white p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <p className="text-base font-black">RAG 解释</p>
-          <p className="mt-1 text-xs text-muted">证据、prompt context、trace</p>
+          <p className="text-base font-black">诊断面板</p>
+          <p className="mt-1 text-xs text-muted">面试演示侧：trace、工具、证据、记忆</p>
         </div>
         <button
           className="grid h-9 w-9 place-items-center rounded-work border border-line bg-white text-ink"
@@ -274,9 +391,238 @@ function RagPanel({
           {ragError}
         </div>
       ) : null}
-      <div className="mb-4 rounded-work bg-subtle p-3">
-        <p className="text-xs font-black text-muted">ops metrics</p>
-        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+      <div className="mb-3 grid grid-cols-2 gap-2 text-xs">
+        <MetricMini label="user" value={shortId(resolvedUserId)} title={resolvedUserId} />
+        <MetricMini label="session" value={resolvedSessionId ? shortId(resolvedSessionId) : "-"} title={resolvedSessionId ?? ""} />
+        <MetricMini label="order" value={resolvedOrderId ?? "-"} />
+        <MetricMini label="risk" value={getRiskLevel(diagnostics)} />
+      </div>
+      <div className="mb-3 grid grid-cols-5 gap-1 rounded-work bg-subtle p-1">
+        <DiagnosticTab tab="timeline" activeTab={activeTab} icon={History} label="流程" onSelect={setActiveTab} />
+        <DiagnosticTab tab="tools" activeTab={activeTab} icon={Wrench} label="工具" onSelect={setActiveTab} />
+        <DiagnosticTab tab="evidence" activeTab={activeTab} icon={BookOpen} label="证据" onSelect={setActiveTab} />
+        <DiagnosticTab tab="memory" activeTab={activeTab} icon={Brain} label="记忆" onSelect={setActiveTab} />
+        <DiagnosticTab tab="json" activeTab={activeTab} icon={FileJson} label="JSON" onSelect={setActiveTab} />
+      </div>
+      {activeTab === "timeline" ? (
+        <TimelineTab diagnostics={diagnostics} intentAnalysis={intentAnalysis} safetyStatus={safetyStatus} />
+      ) : null}
+      {activeTab === "tools" ? <ToolsTab diagnostics={diagnostics} /> : null}
+      {activeTab === "evidence" ? (
+        <EvidenceTab diagnostics={diagnostics} results={results} promptPreview={promptPreview} />
+      ) : null}
+      {activeTab === "memory" ? (
+        <MemoryTab diagnostics={diagnostics} contextUsed={contextUsed} opsMetrics={opsMetrics} recentFeedback={recentFeedback} onCopyEvalCase={onCopyEvalCase} />
+      ) : null}
+      {activeTab === "json" ? <RawJsonTab diagnostics={diagnostics} promptPreview={promptPreview} /> : null}
+    </aside>
+  );
+}
+
+function DiagnosticTab({
+  tab,
+  activeTab,
+  icon: Icon,
+  label,
+  onSelect,
+}: {
+  tab: "timeline" | "tools" | "evidence" | "memory" | "json";
+  activeTab: "timeline" | "tools" | "evidence" | "memory" | "json";
+  icon: React.ComponentType<{ size?: number }>;
+  label: string;
+  onSelect: (tab: "timeline" | "tools" | "evidence" | "memory" | "json") => void;
+}) {
+  const active = tab === activeTab;
+
+  return (
+    <button
+      className={`grid min-h-12 place-items-center rounded-[6px] text-[11px] font-black ${
+        active ? "bg-ink text-white" : "text-muted hover:bg-white"
+      }`}
+      type="button"
+      onClick={() => onSelect(tab)}
+      title={label}
+    >
+      <Icon size={15} />
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function TimelineTab({
+  diagnostics,
+  intentAnalysis,
+  safetyStatus,
+}: {
+  diagnostics: ChatResponse | null;
+  intentAnalysis?: IntentAnalysis;
+  safetyStatus?: SafetyStatus;
+}) {
+  const steps = diagnostics?.full_trace ?? [];
+
+  return (
+    <>
+      <DiagnosticSection title="流程时间线">
+        {steps.length ? (
+          <div className="space-y-2">
+            {steps.map((step, index) => (
+              <div key={`${step.step}-${index}`} className="rounded-work border border-line bg-white p-3 text-xs leading-5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-black text-ink">{step.step || `step_${index + 1}`}</span>
+                  <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
+                    {step.status || "-"} · {step.latency_ms ?? 0}ms
+                  </span>
+                </div>
+                {step.input_summary ? <p className="mt-2 text-muted">输入：{step.input_summary}</p> : null}
+                {step.output_summary ? <p className="mt-1 text-muted">输出：{step.output_summary}</p> : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <TraceFallback diagnostics={diagnostics} />
+        )}
+      </DiagnosticSection>
+      <DiagnosticSection title="意图与风险">
+        <IntentSummary intentAnalysis={intentAnalysis} />
+        <SafetySummary safetyStatus={safetyStatus} />
+        {diagnostics?.handoff_ticket ? (
+          <div className="mt-3 rounded-work border border-amber-200 bg-orange-50 p-2 text-xs leading-5 text-amberline">
+            <div className="flex items-center gap-2 font-black">
+              <ShieldAlert size={13} />
+              人工接管：{diagnostics.handoff_ticket.reason || diagnostics.handoff_ticket.ticket_id || "-"}
+            </div>
+            {diagnostics.handoff_ticket.context_summary ? <p className="mt-1">{diagnostics.handoff_ticket.context_summary}</p> : null}
+          </div>
+        ) : null}
+      </DiagnosticSection>
+    </>
+  );
+}
+
+function ToolsTab({ diagnostics }: { diagnostics: ChatResponse | null }) {
+  const toolResults = diagnostics?.tool_results ?? [];
+
+  return (
+    <DiagnosticSection title="工具调用">
+      {toolResults.length ? (
+        <div className="space-y-2">
+          {toolResults.map((tool, index) => (
+            <div key={`${tool.tool_name}-${index}`} className="rounded-work border border-line bg-white p-3 text-xs leading-5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-black text-ink">{tool.tool_name || `tool_${index + 1}`}</span>
+                <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
+                  {tool.status || "-"} · {tool.latency_ms ?? 0}ms
+                </span>
+              </div>
+              <pre className="mono-block mt-2 max-h-36 overflow-auto whitespace-pre-wrap rounded-work bg-subtle p-2">
+                {JSON.stringify({ input: tool.input, output: tool.output, error_type: tool.error_type, retryable: tool.retryable }, null, 2)}
+              </pre>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyState title="暂无工具结果" text="后端返回 tool_results 后展示订单查询、退款查询和工单结果。" compact />
+      )}
+    </DiagnosticSection>
+  );
+}
+
+function EvidenceTab({
+  diagnostics,
+  results,
+  promptPreview,
+}: {
+  diagnostics: ChatResponse | null;
+  results: RetrievalResult[];
+  promptPreview: RetrievalPromptPreviewResponse | null;
+}) {
+  const citations = diagnostics?.evidence_citations ?? [];
+  const promptContext = diagnostics?.prompt_context_items || promptPreview?.prompt_context_items || [];
+
+  return (
+    <>
+      <DiagnosticSection title="证据溯源">
+        {citations.length ? (
+          <div className="space-y-2">
+            {citations.map((item, index) => (
+              <div key={`${item.evidence_id}-${index}`} className="rounded-work border border-line bg-white p-3 text-xs leading-5">
+                <div className="mb-2 flex flex-wrap gap-2">
+                  <span className="rounded-full bg-ink px-2 py-1 font-black text-white">
+                    {item.evidence_role || "evidence"}
+                  </span>
+                  <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
+                    {item.intent || item.category || "-"}
+                  </span>
+                  <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
+                    score {formatScore(item.score)}
+                  </span>
+                  <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
+                    v{item.version ?? "-"}
+                  </span>
+                </div>
+                <p className="font-black text-ink">{item.title || item.evidence_id || `evidence_${index + 1}`}</p>
+                <p className="mt-1 text-muted">{item.quote || "-"}</p>
+              </div>
+            ))}
+          </div>
+        ) : results.length ? (
+          results.map((item) => <EvidenceCard key={`${item.rank}-${item.question}`} item={item} />)
+        ) : (
+          <EmptyState title="暂无证据" text="发送问题后展示 primary/supporting evidence。" compact />
+        )}
+      </DiagnosticSection>
+      <DiagnosticSection title="prompt context">
+        <div className="space-y-2">
+          {promptContext.length ? (
+            promptContext.map((item) => (
+              <div key={`${item.rank}-${item.role}-${item.question}`} className="rounded-work bg-white p-2 text-xs leading-5">
+                <span className="font-black">{item.role}</span> · {item.display_title ?? item.question}
+              </div>
+            ))
+          ) : (
+            <p className="text-xs text-muted">暂无 prompt context。</p>
+          )}
+        </div>
+      </DiagnosticSection>
+    </>
+  );
+}
+
+function MemoryTab({
+  diagnostics,
+  contextUsed,
+  opsMetrics,
+  recentFeedback,
+  onCopyEvalCase,
+}: {
+  diagnostics: ChatResponse | null;
+  contextUsed?: ChatResponse["context_used"];
+  opsMetrics: OpsMetrics | null;
+  recentFeedback: FeedbackItem[];
+  onCopyEvalCase: (feedbackId: number) => Promise<void>;
+}) {
+  const memory = diagnostics?.memory_snapshot;
+
+  return (
+    <>
+      <DiagnosticSection title="上下文记忆">
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <MetricMini label="recent msg" value={contextUsed?.recent_message_count} />
+          <MetricMini label="summary chars" value={contextUsed?.summary_chars} />
+          <MetricMini label="facts" value={contextUsed?.fact_count} />
+          <MetricMini label="long memory" value={getLongMemoryUsed(diagnostics)} />
+        </div>
+        <div className="mt-3 space-y-2 text-xs leading-5">
+          <MemoryLine label="短期摘要" value={memory?.short_term_summary || memory?.session_summary} />
+          <MemoryLine label="订单状态" value={memory?.current_order_state} />
+          <MemoryLine label="长期字段" value={memory?.used_fields?.join("，")} />
+          <pre className="mono-block max-h-40 overflow-auto whitespace-pre-wrap rounded-work bg-white p-2">
+            {JSON.stringify(memory?.long_term_memory ?? memory?.user_memory ?? {}, null, 2)}
+          </pre>
+        </div>
+      </DiagnosticSection>
+      <DiagnosticSection title="ops metrics">
+        <div className="grid grid-cols-2 gap-2 text-xs">
           <MetricMini label="requests" value={opsMetrics?.request_count} />
           <MetricMini label="failures" value={opsMetrics?.failure_count} />
           <MetricMini label="avg ms" value={opsMetrics?.average_latency_ms} />
@@ -285,37 +631,9 @@ function RagPanel({
           <MetricMini label="reply rules" value={opsMetrics?.reply_rules_hit_count} />
           <MetricMini label="fallback" value={opsMetrics?.fallback_count} />
         </div>
-      </div>
-      <div className="space-y-3">
-        {results.length ? (
-          results.map((item) => <EvidenceCard key={`${item.rank}-${item.question}`} item={item} />)
-        ) : (
-          <EmptyState title="暂无检索证据" text="发送客服问题后展示检索结果。" compact />
-        )}
-      </div>
-      <div className="mt-4 rounded-work bg-subtle p-3">
-        <p className="text-xs font-black text-muted">prompt_context_items</p>
-        <div className="mt-2 space-y-2">
-          {promptPreview?.prompt_context_items?.length ? (
-            promptPreview.prompt_context_items.map((item) => (
-              <div key={`${item.rank}-${item.question}`} className="rounded-work bg-white p-2 text-xs leading-5">
-                <span className="font-black">{item.role}</span> · {item.question}
-              </div>
-            ))
-          ) : (
-            <p className="text-xs text-muted">暂无 prompt context。</p>
-          )}
-        </div>
-      </div>
-      <div className="mt-4 rounded-work bg-subtle p-3">
-        <p className="text-xs font-black text-muted">trace</p>
-        <pre className="mono-block mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs leading-5">
-          {JSON.stringify(diagnostics?.trace ?? {}, null, 2)}
-        </pre>
-      </div>
-      <div className="mt-4 rounded-work bg-subtle p-3">
-        <p className="text-xs font-black text-muted">recent bad cases</p>
-        <div className="mt-2 space-y-2">
+      </DiagnosticSection>
+      <DiagnosticSection title="recent bad cases">
+        <div className="space-y-2">
           {recentFeedback.length ? (
             recentFeedback.map((item) => (
               <div key={item.id} className="rounded-work bg-white p-2 text-xs leading-5">
@@ -337,18 +655,202 @@ function RagPanel({
             <p className="text-xs text-muted">暂无差评反馈。</p>
           )}
         </div>
-      </div>
-    </aside>
+      </DiagnosticSection>
+    </>
   );
 }
 
-function MetricMini({ label, value }: { label: string; value?: number }) {
+function RawJsonTab({
+  diagnostics,
+  promptPreview,
+}: {
+  diagnostics: ChatResponse | null;
+  promptPreview: RetrievalPromptPreviewResponse | null;
+}) {
+  return (
+    <DiagnosticSection title="原始 JSON">
+      <pre className="mono-block max-h-[520px] overflow-auto whitespace-pre-wrap rounded-work bg-white p-3 text-xs leading-5">
+        {JSON.stringify(diagnostics ?? promptPreview ?? {}, null, 2)}
+      </pre>
+    </DiagnosticSection>
+  );
+}
+
+function AnswerBasisCard({ diagnostics }: { diagnostics: ChatResponse }) {
+  const primaryCitation =
+    diagnostics.evidence_citations?.find((item) => item.evidence_role === "primary") ?? diagnostics.evidence_citations?.[0];
+  const primaryRetrieved =
+    diagnostics.prompt_context_items?.find((item) => item.role === "primary") ?? diagnostics.retrieved_items?.[0];
+  const toolSummary = diagnostics.tool_results
+    ?.map((tool) => `${tool.tool_name || "tool"}:${tool.status || "-"}`)
+    .join("，");
+  const fallbackApplied = diagnostics.safety_status?.fallback_applied || diagnostics.trace?.reply_rules_applied;
+  const handoffReason = diagnostics.handoff_ticket?.reason || diagnostics.handoff_ticket?.context_summary;
+
+  return (
+    <div className="rounded-work border border-line bg-white p-3 text-xs leading-5">
+      <div className="mb-2 flex items-center gap-2 font-black text-ink">
+        <BookOpen size={14} />
+        回答依据
+      </div>
+      <div className="grid gap-2 md:grid-cols-2">
+        <BasisLine
+          label="主证据"
+          value={primaryCitation?.title || primaryCitation?.intent || primaryRetrieved?.display_title || primaryRetrieved?.intent || "-"}
+        />
+        <BasisLine label="引用片段" value={primaryCitation?.quote || primaryRetrieved?.evidence_summary || primaryRetrieved?.answer || "-"} />
+        <BasisLine label="订单工具" value={toolSummary || "-"} />
+        <BasisLine label="兜底/人工" value={handoffReason || (fallbackApplied ? "已触发规则兜底" : "未触发")} />
+      </div>
+    </div>
+  );
+}
+
+function BasisLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-work bg-subtle p-2">
+      <div className="font-black text-muted">{label}</div>
+      <div className="mt-1 line-clamp-3 text-ink">{value}</div>
+    </div>
+  );
+}
+
+function TraceFallback({ diagnostics }: { diagnostics: ChatResponse | null }) {
+  if (!diagnostics?.trace) {
+    return <EmptyState title="暂无时间线" text="后端返回 full_trace 后展示完整流程。" compact />;
+  }
+
+  return (
+    <pre className="mono-block max-h-48 overflow-auto whitespace-pre-wrap rounded-work bg-white p-3 text-xs leading-5">
+      {JSON.stringify(diagnostics.trace, null, 2)}
+    </pre>
+  );
+}
+
+function MemoryLine({ label, value }: { label: string; value?: string }) {
   return (
     <div className="rounded-work bg-white p-2">
-      <div className="font-black text-ink">{value ?? 0}</div>
+      <span className="font-black text-ink">{label}：</span>
+      <span className="text-muted">{value || "-"}</span>
+    </div>
+  );
+}
+
+function DiagnosticSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="diagnostic-block mb-4 rounded-work bg-subtle p-3">
+      <p className="text-xs font-black text-muted">{title}</p>
+      <div className="mt-2">{children}</div>
+    </section>
+  );
+}
+
+function MetricMini({ label, value, title }: { label: string; value?: number | string; title?: string }) {
+  return (
+    <div className="min-w-0 rounded-work bg-white p-2" title={title}>
+      <div className="truncate font-black text-ink">{value ?? 0}</div>
       <div className="mt-1 text-[10px] font-bold text-muted">{label}</div>
     </div>
   );
+}
+
+function SessionLine({ label, value, fullValue }: { label: string; value: string; fullValue?: string }) {
+  async function copy() {
+    if (!fullValue) {
+      return;
+    }
+    await navigator.clipboard.writeText(fullValue);
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="font-bold text-muted">{label}</span>
+      <button
+        className="min-w-0 truncate rounded-work bg-subtle px-2 py-1 text-right font-black text-ink disabled:cursor-default"
+        type="button"
+        title={fullValue || value}
+        disabled={!fullValue}
+        onClick={copy}
+      >
+        {value}
+      </button>
+    </div>
+  );
+}
+
+function IntentSummary({ intentAnalysis }: { intentAnalysis?: IntentAnalysis }) {
+  if (!intentAnalysis) {
+    return <p className="text-xs text-muted">暂无意图识别结果。</p>;
+  }
+
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="grid grid-cols-2 gap-2">
+        <MetricMini label="primary" value={intentAnalysis.primary_intent ?? "-"} />
+        <MetricMini label="risk" value={intentAnalysis.risk_level ?? "-"} />
+        <MetricMini label="routing" value={intentAnalysis.routing ?? "-"} />
+        <MetricMini label="secondary" value={intentAnalysis.secondary_intents?.join("，") || "-"} />
+      </div>
+      {intentAnalysis.intents?.length ? (
+        <div className="space-y-2">
+          {intentAnalysis.intents.map((intent) => (
+            <div key={`${intent.name}-${intent.confidence}`} className="rounded-work bg-white p-2 leading-5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-black text-ink">{intent.name}</span>
+                <span className="font-black text-leaf">{formatConfidence(intent.confidence)}</span>
+              </div>
+              <div className="mt-1 text-muted">risk: {intent.risk_level || "-"}</div>
+              {intent.evidence?.length ? <div className="mt-1 text-muted">{intent.evidence.join("，")}</div> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SafetySummary({ safetyStatus }: { safetyStatus?: SafetyStatus }) {
+  if (!safetyStatus) {
+    return <p className="mt-2 text-xs text-muted">暂无安全校验结果。</p>;
+  }
+
+  const blocked = Boolean(safetyStatus.blocked);
+
+  return (
+    <div className="mt-3 rounded-work bg-white p-2 text-xs leading-5">
+      <div className="flex flex-wrap gap-2">
+        <StatusPill label="passed" active={Boolean(safetyStatus.passed)} tone="success" />
+        <StatusPill label="blocked" active={blocked} tone={blocked ? "danger" : "muted"} />
+        <StatusPill label="fallback" active={Boolean(safetyStatus.fallback_applied)} tone="warning" />
+      </div>
+      {safetyStatus.issues?.length ? (
+        <div className="mt-2 text-danger">{safetyStatus.issues.join("，")}</div>
+      ) : (
+        <div className="mt-2 text-muted">暂无安全问题。</div>
+      )}
+    </div>
+  );
+}
+
+function StatusPill({
+  label,
+  active,
+  tone,
+}: {
+  label: string;
+  active: boolean;
+  tone: "success" | "warning" | "danger" | "muted";
+}) {
+  const toneClass =
+    tone === "success"
+      ? "bg-emerald-50 text-leaf"
+      : tone === "warning"
+        ? "bg-orange-50 text-amberline"
+        : tone === "danger"
+          ? "bg-red-50 text-danger"
+          : "bg-subtle text-muted";
+
+  return <span className={`rounded-full px-2 py-1 font-black ${toneClass}`}>{`${label}: ${active ? "yes" : "no"}`}</span>;
 }
 
 function EvidenceCard({ item }: { item: RetrievalResult }) {
@@ -400,4 +902,38 @@ function ChatBubble({ message }: { message: ChatMessage }) {
       <p className="whitespace-pre-wrap">{message.content}</p>
     </article>
   );
+}
+
+function shortId(value: string) {
+  if (value.length <= 16) {
+    return value;
+  }
+  return `${value.slice(0, 8)}...${value.slice(-4)}`;
+}
+
+function formatBoolean(value?: boolean) {
+  if (value === undefined) {
+    return "-";
+  }
+  return value ? "yes" : "no";
+}
+
+function formatConfidence(value: number) {
+  return value <= 1 ? `${Math.round(value * 100)}%` : value.toFixed(2);
+}
+
+function formatScore(value?: number) {
+  return typeof value === "number" ? value.toFixed(3) : "-";
+}
+
+function getRiskLevel(diagnostics: ChatResponse | null) {
+  return diagnostics?.intent_analysis?.risk_level ?? diagnostics?.trace?.intent_analysis?.risk_level ?? "-";
+}
+
+function getLongMemoryUsed(diagnostics: ChatResponse | null) {
+  const used = diagnostics?.memory_snapshot?.used_long_term_memory;
+  if (typeof used === "boolean") {
+    return used ? "yes" : "no";
+  }
+  return diagnostics?.memory_snapshot ? "yes" : "-";
 }

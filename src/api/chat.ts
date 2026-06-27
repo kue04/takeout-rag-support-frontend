@@ -1,9 +1,9 @@
 import { apiRequest } from "./client";
-import type { ChatResponse } from "../types/api";
+import type { ChatRequest, ChatResponse } from "../types/api";
 
-export async function sendChatPrompt(message: string): Promise<ChatResponse> {
-  return apiRequest<ChatResponse, { message: string }>("/chat/prompt", {
+export async function sendChatPrompt(payload: ChatRequest): Promise<ChatResponse> {
+  return apiRequest<ChatResponse, ChatRequest>("/chat/prompt", {
     method: "POST",
-    body: { message },
+    body: payload,
   });
 }
