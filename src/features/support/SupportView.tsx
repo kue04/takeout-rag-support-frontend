@@ -153,7 +153,7 @@ export function SupportView({
           </div>
         </div>
         <div className="mt-3 rounded-work border border-line bg-white p-3 text-xs">
-          <p className="font-black text-ink">预置订单场景</p>
+          <p className="font-black text-ink">模拟当前订单状态</p>
           <div className="mt-2 grid grid-cols-2 gap-2">
             {supportScenarios.map((scenario) => (
               <button

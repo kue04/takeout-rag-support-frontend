@@ -23,7 +23,7 @@ import {
   Star,
   Store as StoreIcon,
 } from "lucide-react";
-import { sendChatPrompt } from "./api/chat";
+import { getChatHistory, sendChatPrompt } from "./api/chat";
 import { getCategories, getExamplesByCategory, searchExamples } from "./api/examples";
 import { exportEvalCase, getRecentFeedback, submitFeedback } from "./api/feedback";
 import {
@@ -39,6 +39,7 @@ import {
 } from "./api/knowledge";
 import { getModelInfo } from "./api/model";
 import { getOpsMetrics } from "./api/ops";
+import { saveOrderState } from "./api/orders";
 import { getRetrievalConfig, previewRetrievalPrompt, searchRetrieval } from "./api/retrieval";
 import {
   dishes,
@@ -64,6 +65,7 @@ import type {
   KnowledgePublishHistoryItem,
   ModelInfo,
   OpsMetrics,
+  OrderStatePayload,
   RetrievalConfig,
   RetrievalMode,
   RetrievalPromptPreviewResponse,
@@ -82,6 +84,7 @@ const supportSessionStorageKey = "takeout-rag-support-sessions";
 const userAddress = "杭州西湖区文三路 168 号";
 const retrievalMode: RetrievalMode = "hybrid";
 const knowledgeExampleLimit = 20;
+const demoOrderPrefix = "DEMO-";
 
 export default function App() {
   const pageRef = useRef<HTMLElement | null>(null);
@@ -102,13 +105,7 @@ export default function App() {
   const [apiError, setApiError] = useState("");
   const [ragError, setRagError] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: "您好，请选择订单问题，我会结合订单信息为您处理。",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => getWelcomeMessages());
   const [retrievalResults, setRetrievalResults] = useState<RetrievalResult[]>([]);
   const [promptPreview, setPromptPreview] = useState<RetrievalPromptPreviewResponse | null>(null);
   const [latestDiagnostics, setLatestDiagnostics] = useState<ChatResponse | null>(null);
@@ -260,18 +257,10 @@ export default function App() {
     };
 
     setOrders((current) => [order, ...current]);
+    void persistOrderState(order);
     setCart({});
     setActiveOrderId(order.id);
-    setMessages([
-      {
-        id: "welcome",
-        role: "assistant",
-        content: "您好，请选择订单问题，我会结合订单信息为您处理。",
-      },
-    ]);
-    setRetrievalResults([]);
-    setPromptPreview(null);
-    setLatestDiagnostics(null);
+    resetSupportState();
     navigate("orderDetail");
   }
 
@@ -301,6 +290,7 @@ export default function App() {
     };
 
     try {
+      await persistOrderState(activeOrder);
       const [chatResult, searchResult, previewResult] = await Promise.allSettled([
         sendChatPrompt({
           message: messageWithContext,
@@ -359,31 +349,77 @@ export default function App() {
 
   function openSupport(order: TakeoutOrder) {
     setActiveOrderId(order.id);
+    resetSupportState();
     navigate("support");
+    void persistOrderState(order);
+    void restoreSupportHistory(order);
   }
 
   function selectSupportScenario(scenario: { id: string; status: OrderStatus; deliveryStatus: string }) {
     const baseOrder = activeOrder ?? orders[0] ?? createScenarioOrder(scenario);
     const scenarioOrder: TakeoutOrder = {
       ...baseOrder,
-      id: scenario.id,
       status: scenario.status,
       deliveryStatus: scenario.deliveryStatus,
       createdAt: baseOrder.createdAt || new Date().toLocaleString("zh-CN", { hour12: false }),
     };
 
-    setOrders((current) => [scenarioOrder, ...current.filter((order) => order.id !== scenarioOrder.id)]);
+    setOrders((current) => {
+      const exists = current.some((order) => order.id === scenarioOrder.id);
+      if (!exists) {
+        return [scenarioOrder, ...current.filter((order) => !order.id.startsWith(demoOrderPrefix))];
+      }
+      return current
+        .filter((order) => !order.id.startsWith(demoOrderPrefix))
+        .map((order) => (order.id === scenarioOrder.id ? scenarioOrder : order));
+    });
     setActiveOrderId(scenarioOrder.id);
-    setMessages([
-      {
-        id: "welcome",
-        role: "assistant",
-        content: "您好，请选择订单问题，我会结合订单信息为您处理。",
-      },
-    ]);
+    void persistOrderState(scenarioOrder);
+  }
+
+  function resetSupportState() {
+    setMessages(getWelcomeMessages());
     setRetrievalResults([]);
     setPromptPreview(null);
     setLatestDiagnostics(null);
+    setLatestQuery("");
+    setFeedbackStatus("");
+  }
+
+  async function restoreSupportHistory(order: TakeoutOrder) {
+    try {
+      const history = await getChatHistory({
+        user_id: userId,
+        order_id: order.id,
+        session_id: supportSessions[order.id] ?? null,
+        limit: 80,
+      });
+      if (history.session_id) {
+        setSupportSessions((current) => {
+          const next = { ...current, [order.id]: history.session_id };
+          saveSupportSessions(next);
+          return next;
+        });
+      }
+      setMessages(history.messages.length ? history.messages.map(historyMessageToChatMessage) : getWelcomeMessages());
+      const latestResponse = history.latest_response?.reply ? history.latest_response : null;
+      setLatestDiagnostics(latestResponse);
+      setRetrievalResults(latestResponse?.retrieved_items ?? []);
+      setPromptPreview(null);
+      setLatestQuery(
+        [...history.messages].reverse().find((message) => message.role === "user")?.content ?? "",
+      );
+    } catch (error) {
+      setRagError(getErrorMessage(error, "客服历史读取失败"));
+    }
+  }
+
+  async function persistOrderState(order: TakeoutOrder) {
+    try {
+      await saveOrderState(orderToStatePayload(order, userId));
+    } catch (error) {
+      setRagError(getErrorMessage(error, "订单状态持久化失败"));
+    }
   }
 
   async function copyDebugReport() {
@@ -1401,10 +1437,37 @@ function getCartItems(cart: Cart) {
 function loadOrders(): TakeoutOrder[] {
   try {
     const raw = localStorage.getItem(storageKey);
-    return raw ? (JSON.parse(raw) as TakeoutOrder[]) : [];
+    const orders = raw ? (JSON.parse(raw) as TakeoutOrder[]) : [];
+    const cleanedOrders = orders.filter((order) => !order.id.startsWith(demoOrderPrefix));
+    if (cleanedOrders.length !== orders.length) {
+      localStorage.setItem(storageKey, JSON.stringify(cleanedOrders));
+    }
+    return cleanedOrders;
   } catch {
     return [];
   }
+}
+
+function getWelcomeMessages(): ChatMessage[] {
+  return [
+    {
+      id: "welcome",
+      role: "assistant",
+      content: "您好，请选择订单问题，我会结合订单信息为您处理。",
+    },
+  ];
+}
+
+function historyMessageToChatMessage(message: {
+  role: "user" | "assistant";
+  content: string;
+  created_at?: string;
+}): ChatMessage {
+  return {
+    id: `${message.role}-${message.created_at || crypto.randomUUID()}`,
+    role: message.role,
+    content: message.content,
+  };
 }
 
 function getOrCreateUserId() {
@@ -1447,7 +1510,7 @@ function createScenarioOrder(scenario: { id: string; status: OrderStatus; delive
   const firstDish = dishes.find((dish) => dish.storeId === store.id) ?? dishes[0];
 
   return {
-    id: scenario.id,
+    id: "WM-DEMO-ORDER",
     storeId: store.id,
     storeName: store.name,
     items: [
@@ -1466,6 +1529,28 @@ function createScenarioOrder(scenario: { id: string; status: OrderStatus; delive
     address: userAddress,
     createdAt: new Date().toLocaleString("zh-CN", { hour12: false }),
   };
+}
+
+function orderToStatePayload(order: TakeoutOrder, userId: string): OrderStatePayload {
+  return {
+    user_id: userId,
+    order_id: order.id,
+    status: order.status,
+    status_label: order.deliveryStatus,
+    delivery_status: order.deliveryStatus,
+    summary: order.deliveryStatus,
+    refund_status: getRefundStatusForOrder(order.status),
+    store_name: order.storeName,
+    items: order.items.map((item) => ({ ...item })),
+    total: order.total,
+  };
+}
+
+function getRefundStatusForOrder(status: OrderStatus) {
+  if (status === "paid" || status === "delivered") {
+    return "none";
+  }
+  return "pending_review";
 }
 
 function buildDebugReport({

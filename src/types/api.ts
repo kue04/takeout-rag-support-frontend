@@ -190,6 +190,33 @@ export type ChatResponse = {
   needs_manual_review?: boolean;
 };
 
+export type ChatHistoryResponse = {
+  user_id: string;
+  session_id: string;
+  order_id?: string | null;
+  messages: Array<{
+    role: "user" | "assistant";
+    content: string;
+    intent?: Record<string, unknown>;
+    risk_level?: string;
+    created_at?: string;
+  }>;
+  latest_response?: ChatResponse;
+};
+
+export type OrderStatePayload = {
+  user_id: string;
+  order_id: string;
+  status: string;
+  status_label?: string;
+  delivery_status?: string;
+  summary?: string;
+  refund_status?: string;
+  store_name?: string;
+  items?: Array<Record<string, unknown>>;
+  total?: number;
+};
+
 export type FeedbackRequest = {
   request_id: string;
   query: string;

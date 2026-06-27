@@ -6,6 +6,7 @@
 
 - 外卖业务模拟：门店、购物车、订单、订单详情和订单售后入口。
 - 订单客服：从订单详情进入客服，对话请求会携带 `user_id`、`session_id`、`order_id` 和订单上下文。
+- 持久化客服：订单状态会写入后端 `/orders/{order_id}/state`，客服页重新打开会通过 `/chat/history` 恢复历史消息和最近诊断。
 - 诊断面板：客服页右侧提供 `流程时间线`、`工具调用`、`证据溯源`、`上下文记忆`、`原始 JSON` 5 个 tab。
 - 回复依据：客服回复下方展示主证据、引用片段、订单工具结果、规则兜底或人工接管状态。
 - 演示场景：客服页侧边栏支持切换未接单、商家制作、骑手取餐、已送达等预置订单状态。
@@ -41,6 +42,8 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 当前前端使用的接口：
 
 - `POST /chat/prompt`
+- `GET /chat/history`
+- `PUT /orders/{order_id}/state`
 - `GET /model/info`
 - `GET /retrieval/config`
 - `POST /retrieval/search`
@@ -69,3 +72,8 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 - `decision_trace`
 - `full_trace`
 - `handoff_ticket`
+
+客服历史和订单状态持久化：
+
+- `GET /chat/history?user_id=demo_user&order_id=WMxxxx&limit=50`：重新打开客服页时恢复历史消息、`session_id` 和最近一次诊断响应。
+- `PUT /orders/{order_id}/state`：保存当前订单状态，后端订单工具会优先读取该持久化状态。
