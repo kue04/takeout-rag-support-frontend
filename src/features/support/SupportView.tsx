@@ -14,6 +14,7 @@ import type {
   RetrievalPromptPreviewResponse,
   RetrievalResult,
   SafetyStatus,
+  TokenUsage,
 } from "../../types/api";
 
 type SupportScenario = {
@@ -396,6 +397,7 @@ function RagPanel({
         <MetricMini label="session" value={resolvedSessionId ? shortId(resolvedSessionId) : "-"} title={resolvedSessionId ?? ""} />
         <MetricMini label="order" value={resolvedOrderId ?? "-"} />
         <MetricMini label="risk" value={getRiskLevel(diagnostics)} />
+        <MetricMini label="tokens" value={formatTokenCount(diagnostics?.token_usage?.total_tokens)} title={formatTokenUsageTitle(diagnostics?.token_usage)} />
       </div>
       <div className="mb-3 grid grid-cols-5 gap-1 rounded-work bg-subtle p-1">
         <DiagnosticTab tab="timeline" activeTab={activeTab} icon={History} label="流程" onSelect={setActiveTab} />
@@ -475,6 +477,7 @@ function TimelineTab({
                 </div>
                 {step.input_summary ? <p className="mt-2 text-muted">输入：{step.input_summary}</p> : null}
                 {step.output_summary ? <p className="mt-1 text-muted">输出：{step.output_summary}</p> : null}
+                {step.step === "generation_completed" ? <TokenUsageInline usage={getStepTokenUsage(step.metadata)} /> : null}
               </div>
             ))}
           </div>
@@ -754,6 +757,20 @@ function MetricMini({ label, value, title }: { label: string; value?: number | s
   );
 }
 
+function TokenUsageInline({ usage }: { usage?: TokenUsage }) {
+  if (!usage) {
+    return null;
+  }
+
+  return (
+    <div className="mt-2 grid grid-cols-3 gap-2 rounded-work bg-subtle p-2">
+      <MetricMini label="prompt token" value={formatTokenCount(usage.prompt_tokens)} />
+      <MetricMini label="reply token" value={formatTokenCount(usage.completion_tokens)} />
+      <MetricMini label="total token" value={formatTokenCount(usage.total_tokens)} title={formatTokenUsageTitle(usage)} />
+    </div>
+  );
+}
+
 function SessionLine({ label, value, fullValue }: { label: string; value: string; fullValue?: string }) {
   async function copy() {
     if (!fullValue) {
@@ -924,6 +941,31 @@ function formatConfidence(value: number) {
 
 function formatScore(value?: number) {
   return typeof value === "number" ? value.toFixed(3) : "-";
+}
+
+function formatTokenCount(value?: number) {
+  return typeof value === "number" ? value.toLocaleString("en-US") : "-";
+}
+
+function formatTokenUsageTitle(usage?: TokenUsage) {
+  if (!usage) {
+    return "暂无 token 统计";
+  }
+  return [
+    `provider: ${usage.provider || "-"}`,
+    `model: ${usage.model || "-"}`,
+    `prompt: ${formatTokenCount(usage.prompt_tokens)}`,
+    `reply: ${formatTokenCount(usage.completion_tokens)}`,
+    `method: ${usage.counting_method || "-"}`,
+  ].join("\n");
+}
+
+function getStepTokenUsage(metadata?: Record<string, unknown>): TokenUsage | undefined {
+  const value = metadata?.token_usage;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as TokenUsage;
 }
 
 function getRiskLevel(diagnostics: ChatResponse | null) {

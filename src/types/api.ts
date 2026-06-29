@@ -100,6 +100,15 @@ export type FullTraceStep = {
   metadata?: Record<string, unknown>;
 };
 
+export type TokenUsage = {
+  provider?: string;
+  model?: string;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  counting_method?: string;
+};
+
 export type MemorySnapshot = {
   short_term_summary?: string;
   session_summary?: string;
@@ -161,6 +170,7 @@ export type ChatResponse = {
   decision_trace?: unknown;
   full_trace?: FullTraceStep[];
   handoff_ticket?: HandoffTicket | null;
+  token_usage?: TokenUsage;
   session_id?: string;
   user_id?: string;
   order_id?: string | null;
