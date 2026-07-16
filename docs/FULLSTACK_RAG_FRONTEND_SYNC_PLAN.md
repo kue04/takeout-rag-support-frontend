@@ -234,3 +234,15 @@ npm run build
 - [ ] Agent 二次检索显示 attempt=2。
 - [ ] 写工具永远需要人工操作。
 - [ ] Release 页面显示两仓 commit 和当前指纹。
+
+## 7. 实施记录
+
+### 2026-07-16：里程碑 1 前端契约与聊天链路
+
+- 新增 `openapi/openapi.json` 契约快照、`scripts/sync-openapi.mjs` 和 `src/types/openapi.generated.ts`。
+- `ChatRequest`、Retrieval 请求/响应及检索结果类型开始改为 OpenAPI generated aliases。
+- `apiRequest` 集中处理操作人 Header，并支持 `AbortSignal` 透传；各 API 模块不再重复拼 Header。
+- 新增 `buildChatRequest`，保证 `message` 等于裁剪后的原始问题，订单事实仅通过 `order_id` 传递。
+- 普通客服聊天已删除并行 `/retrieval/search` 和 `/retrieval/prompt-preview` 调用，证据展示改用 `/chat/prompt` 返回的 `retrieved_items`。
+- 新增 Vitest 基础设施及两个目标测试：请求构造、Header/AbortSignal。
+- 验收命令：`npm run types:api`、`npm run test`、`npm run build`。

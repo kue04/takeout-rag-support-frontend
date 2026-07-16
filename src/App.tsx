@@ -49,7 +49,7 @@ import {
   listPromptVersions,
   rollbackLatestPromptVersion,
 } from "./api/prompt";
-import { getRetrievalConfig, previewRetrievalPrompt, searchRetrieval } from "./api/retrieval";
+import { getRetrievalConfig } from "./api/retrieval";
 import { getReleaseChecklist } from "./api/release";
 import {
   dishes,
@@ -63,6 +63,7 @@ import {
 } from "./data/marketplace";
 import { EmptyState } from "./components/EmptyState";
 import { SupportView } from "./features/support/SupportView";
+import { buildChatRequest } from "./features/support/buildChatRequest";
 import { KnowledgeOpsView } from "./features/knowledge/KnowledgeOpsView";
 import { ProjectShowcaseView } from "./features/showcase/ProjectShowcaseView";
 import type {
@@ -307,68 +308,41 @@ export default function App() {
       { id: crypto.randomUUID(), role: "user", content: normalizedQuestion },
     ]);
 
-    const messageWithContext = buildOrderContextMessage(activeOrder, normalizedQuestion);
     const currentSessionId = supportSessions[activeOrder.id] ?? null;
-    const retrievalPayload = {
-      query: normalizedQuestion,
-      mode: retrievalMode,
-      limit: 5,
-      min_score: 0.62,
-    };
 
     try {
       await persistOrderState(activeOrder);
-      const [chatResult, searchResult, previewResult] = await Promise.allSettled([
-        sendChatPrompt({
-          message: messageWithContext,
-          user_id: userId,
-          session_id: currentSessionId,
-          order_id: activeOrder.id,
+      const chatResponse = await sendChatPrompt(
+        buildChatRequest({
+          question: normalizedQuestion,
+          userId,
+          sessionId: currentSessionId,
+          orderId: activeOrder.id,
         }),
-        searchRetrieval(retrievalPayload),
-        previewRetrievalPrompt(retrievalPayload),
+      );
+      setLatestDiagnostics(chatResponse);
+      setRetrievalResults(chatResponse.retrieved_items ?? []);
+
+      if (chatResponse.session_id) {
+        setSupportSessions((current) => {
+          const next = { ...current, [activeOrder.id]: chatResponse.session_id as string };
+          saveSupportSessions(next);
+          return next;
+        });
+      }
+
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: chatResponse.reply,
+          confidenceScore: chatResponse.confidence_score,
+          retrievedDocuments: chatResponse.retrieved_documents,
+        },
       ]);
-
-      if (searchResult.status === "fulfilled") {
-        setRetrievalResults(searchResult.value.results);
-      } else {
-        setRagError(getErrorMessage(searchResult.reason, "检索接口请求失败"));
-      }
-
-      if (previewResult.status === "fulfilled") {
-        setPromptPreview(previewResult.value);
-      } else {
-        setRagError(getErrorMessage(previewResult.reason, "prompt preview 请求失败"));
-      }
-
-      if (chatResult.status === "fulfilled") {
-        setLatestDiagnostics(chatResult.value);
-
-        if (chatResult.value.session_id) {
-          setSupportSessions((current) => {
-            const next = { ...current, [activeOrder.id]: chatResult.value.session_id as string };
-            saveSupportSessions(next);
-            return next;
-          });
-        }
-
-        setMessages((current) => [
-          ...current,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: chatResult.value.reply,
-            confidenceScore: chatResult.value.confidence_score,
-            retrievedDocuments: chatResult.value.retrieved_documents,
-          },
-        ]);
-
-        if (chatResult.value.retrieved_items?.length) {
-          setRetrievalResults(chatResult.value.retrieved_items);
-        }
-      } else {
-        setApiError(getErrorMessage(chatResult.reason, "客服接口请求失败"));
-      }
+    } catch (error) {
+      setApiError(getErrorMessage(error, "客服接口请求失败"));
     } finally {
       setIsChatLoading(false);
     }
