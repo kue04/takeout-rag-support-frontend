@@ -1,4 +1,8 @@
-export type RetrievalMode = "vector" | "hybrid";
+import type { components } from "./openapi.generated";
+
+type ApiSchemas = components["schemas"];
+
+export type RetrievalMode = ApiSchemas["RetrievalSearchRequest"]["mode"];
 
 export type RetrievalConfig = {
   embedding_model?: string;
@@ -9,23 +13,7 @@ export type RetrievalConfig = {
   reply_rules_status?: string;
 };
 
-export type RetrievalResult = {
-  rank: number;
-  score: number;
-  rerank_score?: number;
-  model_rerank_score?: number;
-  vector_score?: number;
-  keyword_bonus?: number;
-  direction_penalty?: number;
-  category?: string;
-  intent?: string;
-  question: string;
-  answer: string;
-  role?: "primary" | "supporting" | string;
-  evidence_strength?: string;
-  display_title?: string;
-  evidence_summary?: string;
-};
+export type RetrievalResult = ApiSchemas["RetrievalResultItem"];
 
 export type PromptContextItem = RetrievalResult & {
   role: "primary" | "supporting" | string;
@@ -33,12 +21,7 @@ export type PromptContextItem = RetrievalResult & {
   mixed_supporting_intent?: boolean;
 };
 
-export type ChatRequest = {
-  message: string;
-  user_id?: string;
-  session_id?: string | null;
-  order_id?: string | null;
-};
+export type ChatRequest = ApiSchemas["ChatRequest"];
 
 export type IntentAnalysis = {
   primary_intent?: string;
@@ -481,24 +464,12 @@ export type ChatMessage = {
   retrievedDocuments?: string[];
 };
 
-export type RetrievalSearchRequest = {
-  query: string;
-  mode: RetrievalMode;
-  limit: number;
-  min_score: number;
-};
+export type RetrievalSearchRequest = ApiSchemas["RetrievalSearchRequest"];
 
-export type RetrievalSearchResponse = {
-  query: string;
-  mode: RetrievalMode;
-  count: number;
-  results: RetrievalResult[];
-};
+export type RetrievalSearchResponse = ApiSchemas["RetrievalSearchResponse"];
 
-export type RetrievalPromptPreviewResponse = RetrievalSearchResponse & {
-  prompt?: string;
+export type RetrievalPromptPreviewResponse = ApiSchemas["PromptPreviewResponse"] & {
   final_prompt?: string;
-  prompt_context_items?: PromptContextItem[];
 };
 
 export type ModelInfo = {

@@ -12,21 +12,37 @@ export class ApiError extends Error {
   }
 }
 
+export function buildOperatorHeaders(role: string, operatorId: string) {
+  return {
+    "X-Operator-Id": operatorId,
+    "X-User-Role": role,
+  };
+}
+
 export async function apiRequest<TResponse, TBody = unknown>(
   path: string,
   options: {
     method?: "GET" | "POST" | "PUT";
     body?: TBody;
     headers?: Record<string, string>;
+    role?: string;
+    operatorId?: string;
+    signal?: AbortSignal;
   } = {},
 ): Promise<TResponse> {
+  const operatorHeaders =
+    options.role && options.operatorId
+      ? buildOperatorHeaders(options.role, options.operatorId)
+      : {};
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: options.method ?? "GET",
     headers: {
       "Content-Type": "application/json",
+      ...operatorHeaders,
       ...options.headers,
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: options.signal,
   });
 
   if (!response.ok) {

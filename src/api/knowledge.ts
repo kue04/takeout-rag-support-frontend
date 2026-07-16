@@ -8,21 +8,6 @@ import type {
   KnowledgePublishResponse,
 } from "../types/api";
 
-const knowledgeWriteHeaders = {
-  "X-Operator-Id": "knowledge_ops_demo",
-  "X-User-Role": "knowledge_ops",
-};
-
-const knowledgeReadHeaders = {
-  "X-Operator-Id": "knowledge_ops_demo",
-  "X-User-Role": "knowledge_ops",
-};
-
-const knowledgeRollbackHeaders = {
-  "X-Operator-Id": "admin_demo",
-  "X-User-Role": "admin",
-};
-
 export async function listKnowledgeItems(params: {
   status?: string;
   category?: string;
@@ -41,7 +26,8 @@ export async function listKnowledgeItems(params: {
     }
   }
   return apiRequest<KnowledgeListResponse>(`/knowledge/items?${query}`, {
-    headers: knowledgeReadHeaders,
+    role: "knowledge_ops",
+    operatorId: "knowledge_ops_demo",
   });
 }
 
@@ -49,7 +35,8 @@ export async function createKnowledgeItem(body: KnowledgePayload) {
   return apiRequest<KnowledgeOpsItem, KnowledgePayload>("/knowledge/items", {
     method: "POST",
     body,
-    headers: knowledgeWriteHeaders,
+    role: "knowledge_ops",
+    operatorId: "knowledge_ops_demo",
   });
 }
 
@@ -57,14 +44,16 @@ export async function updateKnowledgeItem(id: number, body: KnowledgePayload) {
   return apiRequest<KnowledgeOpsItem, KnowledgePayload>(`/knowledge/items/${id}`, {
     method: "PUT",
     body,
-    headers: knowledgeWriteHeaders,
+    role: "knowledge_ops",
+    operatorId: "knowledge_ops_demo",
   });
 }
 
 export async function archiveKnowledgeItem(id: number) {
   return apiRequest<KnowledgeOpsItem>(`/knowledge/items/${id}/archive`, {
     method: "POST",
-    headers: knowledgeWriteHeaders,
+    role: "knowledge_ops",
+    operatorId: "knowledge_ops_demo",
   });
 }
 
@@ -74,33 +63,38 @@ export async function reviewKnowledgeItem(id: number, status: "pending_review" |
     {
       method: "POST",
       body: { status, review_note },
-      headers: knowledgeWriteHeaders,
+      role: "knowledge_ops",
+      operatorId: "knowledge_ops_demo",
     },
   );
 }
 
 export async function exportApprovedKnowledge() {
   return apiRequest<KnowledgeExportResponse>("/knowledge/export-approved", {
-    headers: knowledgeReadHeaders,
+    role: "knowledge_ops",
+    operatorId: "knowledge_ops_demo",
   });
 }
 
 export async function publishApprovedKnowledge() {
   return apiRequest<KnowledgePublishResponse>("/knowledge/publish-approved", {
     method: "POST",
-    headers: knowledgeWriteHeaders,
+    role: "knowledge_ops",
+    operatorId: "knowledge_ops_demo",
   });
 }
 
 export async function getKnowledgePublishHistory(limit = 20) {
   return apiRequest<KnowledgePublishHistoryResponse>(`/knowledge/publish-history?limit=${limit}`, {
-    headers: knowledgeReadHeaders,
+    role: "knowledge_ops",
+    operatorId: "knowledge_ops_demo",
   });
 }
 
 export async function rollbackLatestKnowledgePublish() {
   return apiRequest<KnowledgePublishResponse>("/knowledge/rollback-latest", {
     method: "POST",
-    headers: knowledgeRollbackHeaders,
+    role: "admin",
+    operatorId: "admin_demo",
   });
 }
