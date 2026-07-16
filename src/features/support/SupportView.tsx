@@ -1,12 +1,29 @@
 import { useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
-import { ArrowLeft, BookOpen, Bot, Brain, Clipboard, FileJson, History, MessageCircle, ShieldAlert, Wrench, X } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpen,
+  Bot,
+  Brain,
+  CheckCircle2,
+  ChevronDown,
+  Clipboard,
+  Edit3,
+  FileJson,
+  Flag,
+  History,
+  MessageCircle,
+  ShieldAlert,
+  Wrench,
+  X,
+} from "lucide-react";
 import { EmptyState } from "../../components/EmptyState";
 import { Score } from "../../components/Score";
 import { supportQuestions, type OrderStatus, type TakeoutOrder } from "../../data/marketplace";
 import type {
   ChatMessage,
+  ChatReviewAction,
   ChatResponse,
   FeedbackItem,
   IntentAnalysis,
@@ -23,6 +40,8 @@ type SupportScenario = {
   status: OrderStatus;
   deliveryStatus: string;
 };
+
+type DiagnosticTabKey = "timeline" | "tools" | "evidence" | "memory" | "json";
 
 const supportScenarios: SupportScenario[] = [
   { id: "DEMO-PAID", label: "未接单", status: "paid", deliveryStatus: "订单已支付，商家尚未接单" },
@@ -50,10 +69,13 @@ export function SupportView({
   onCopyReport,
   onSubmitFeedback,
   feedbackStatus,
+  onReviewAction,
+  reviewStatus,
   recentFeedback,
   opsMetrics,
   onCopyEvalCase,
   onSelectScenario,
+  canViewInternalDiagnostics,
 }: {
   order: TakeoutOrder | null;
   userId: string;
@@ -73,10 +95,13 @@ export function SupportView({
   onCopyReport: () => void;
   onSubmitFeedback: (helpful: boolean, reason?: string, expectedReply?: string) => Promise<void>;
   feedbackStatus: string;
+  onReviewAction: (action: ChatReviewAction, finalReply?: string, reason?: string) => Promise<void>;
+  reviewStatus: string;
   recentFeedback: FeedbackItem[];
   opsMetrics: OpsMetrics | null;
   onCopyEvalCase: (feedbackId: number) => Promise<void>;
   onSelectScenario: (scenario: SupportScenario) => void;
+  canViewInternalDiagnostics: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [feedbackReason, setFeedbackReason] = useState("");
@@ -212,6 +237,29 @@ export function SupportView({
           {diagnostics ? <AnswerBasisCard diagnostics={diagnostics} /> : null}
           {diagnostics ? (
             <div className="rounded-work border border-line bg-white p-3 text-xs">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <ReviewButton
+                  icon={CheckCircle2}
+                  label="采纳"
+                  onClick={() => void onReviewAction("accepted", diagnostics.reply)}
+                />
+                <ReviewButton
+                  icon={Edit3}
+                  label="编辑发送"
+                  onClick={() => void onReviewAction("edited_and_sent", expectedReply || diagnostics.reply, feedbackReason)}
+                />
+                <ReviewButton
+                  icon={ShieldAlert}
+                  label="转人工"
+                  onClick={() => void onReviewAction("human_handoff", diagnostics.reply, feedbackReason || "客服选择转人工")}
+                />
+                <ReviewButton
+                  icon={Flag}
+                  label="bad case"
+                  onClick={() => void onReviewAction("marked_bad_case", diagnostics.reply, feedbackReason || "客服标记 bad case")}
+                />
+                <span className="font-bold text-muted">{reviewStatus}</span>
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   className="rounded-work bg-emerald-600 px-3 py-2 font-black text-white"
@@ -285,6 +333,7 @@ export function SupportView({
           recentFeedback={recentFeedback}
           opsMetrics={opsMetrics}
           onCopyEvalCase={onCopyEvalCase}
+          canViewInternalDiagnostics={canViewInternalDiagnostics}
         />
       </div>
 
@@ -313,11 +362,34 @@ export function SupportView({
               recentFeedback={recentFeedback}
               opsMetrics={opsMetrics}
               onCopyEvalCase={onCopyEvalCase}
+              canViewInternalDiagnostics={canViewInternalDiagnostics}
             />
           </div>
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ReviewButton({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: React.ComponentType<{ size?: number }>;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className="inline-flex items-center gap-1.5 rounded-work border border-line bg-white px-3 py-2 font-black text-ink hover:border-leaf"
+      type="button"
+      onClick={onClick}
+      title={label}
+    >
+      <Icon size={14} />
+      {label}
+    </button>
   );
 }
 
@@ -333,6 +405,7 @@ function RagPanel({
   recentFeedback,
   opsMetrics,
   onCopyEvalCase,
+  canViewInternalDiagnostics,
 }: {
   orderId: string;
   userId: string;
@@ -345,6 +418,7 @@ function RagPanel({
   recentFeedback: FeedbackItem[];
   opsMetrics: OpsMetrics | null;
   onCopyEvalCase: (feedbackId: number) => Promise<void>;
+  canViewInternalDiagnostics: boolean;
 }) {
   const contextUsed = diagnostics?.context_used;
   const intentAnalysis = diagnostics?.intent_analysis;
@@ -353,7 +427,10 @@ function RagPanel({
   const resolvedUserId = diagnostics?.user_id ?? userId;
   const resolvedOrderId = diagnostics?.order_id ?? orderId;
   const panelRef = useRef<HTMLElement | null>(null);
-  const [activeTab, setActiveTab] = useState<"timeline" | "tools" | "evidence" | "memory" | "json">("timeline");
+  const [activeTab, setActiveTab] = useState<DiagnosticTabKey>("timeline");
+  const visibleActiveTab = !canViewInternalDiagnostics && ["memory", "json"].includes(activeTab)
+    ? "timeline"
+    : activeTab;
 
   useGSAP(
     () => {
@@ -376,12 +453,12 @@ function RagPanel({
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <p className="text-base font-black">诊断面板</p>
-          <p className="mt-1 text-xs text-muted">面试演示侧：trace、工具、证据、记忆</p>
+          <p className="mt-1 text-xs text-muted">工具、证据、风险</p>
         </div>
         <button
           className="grid h-9 w-9 place-items-center rounded-work border border-line bg-white text-ink"
           type="button"
-          title="复制调试报告"
+          title={canViewInternalDiagnostics ? "复制调试报告" : "复制处理摘要"}
           onClick={onCopyReport}
         >
           <Clipboard size={16} />
@@ -397,26 +474,41 @@ function RagPanel({
         <MetricMini label="session" value={resolvedSessionId ? shortId(resolvedSessionId) : "-"} title={resolvedSessionId ?? ""} />
         <MetricMini label="order" value={resolvedOrderId ?? "-"} />
         <MetricMini label="risk" value={getRiskLevel(diagnostics)} />
-        <MetricMini label="tokens" value={formatTokenCount(diagnostics?.token_usage?.total_tokens)} title={formatTokenUsageTitle(diagnostics?.token_usage)} />
+        {canViewInternalDiagnostics ? <MetricMini label="prompt" value={diagnostics?.prompt_version ?? "-"} /> : null}
+        <MetricMini
+          label="tokens"
+          value={formatTokenCount(diagnostics?.token_usage?.total_tokens)}
+          title={canViewInternalDiagnostics ? formatTokenUsageTitle(diagnostics?.token_usage) : undefined}
+        />
       </div>
-      <div className="mb-3 grid grid-cols-5 gap-1 rounded-work bg-subtle p-1">
-        <DiagnosticTab tab="timeline" activeTab={activeTab} icon={History} label="流程" onSelect={setActiveTab} />
-        <DiagnosticTab tab="tools" activeTab={activeTab} icon={Wrench} label="工具" onSelect={setActiveTab} />
-        <DiagnosticTab tab="evidence" activeTab={activeTab} icon={BookOpen} label="证据" onSelect={setActiveTab} />
-        <DiagnosticTab tab="memory" activeTab={activeTab} icon={Brain} label="记忆" onSelect={setActiveTab} />
-        <DiagnosticTab tab="json" activeTab={activeTab} icon={FileJson} label="JSON" onSelect={setActiveTab} />
+      <div className={`mb-3 grid gap-1 rounded-work bg-subtle p-1 ${canViewInternalDiagnostics ? "grid-cols-5" : "grid-cols-3"}`}>
+        <DiagnosticTab tab="timeline" activeTab={visibleActiveTab} icon={History} label="流程" onSelect={setActiveTab} />
+        <DiagnosticTab tab="tools" activeTab={visibleActiveTab} icon={Wrench} label="工具" onSelect={setActiveTab} />
+        <DiagnosticTab tab="evidence" activeTab={visibleActiveTab} icon={BookOpen} label="证据" onSelect={setActiveTab} />
+        {canViewInternalDiagnostics ? <DiagnosticTab tab="memory" activeTab={visibleActiveTab} icon={Brain} label="记忆" onSelect={setActiveTab} /> : null}
+        {canViewInternalDiagnostics ? <DiagnosticTab tab="json" activeTab={visibleActiveTab} icon={FileJson} label="JSON" onSelect={setActiveTab} /> : null}
       </div>
-      {activeTab === "timeline" ? (
-        <TimelineTab diagnostics={diagnostics} intentAnalysis={intentAnalysis} safetyStatus={safetyStatus} />
+      {visibleActiveTab === "timeline" ? (
+        <TimelineTab
+          diagnostics={diagnostics}
+          intentAnalysis={intentAnalysis}
+          safetyStatus={safetyStatus}
+          canViewInternalDiagnostics={canViewInternalDiagnostics}
+        />
       ) : null}
-      {activeTab === "tools" ? <ToolsTab diagnostics={diagnostics} /> : null}
-      {activeTab === "evidence" ? (
-        <EvidenceTab diagnostics={diagnostics} results={results} promptPreview={promptPreview} />
+      {visibleActiveTab === "tools" ? <ToolsTab diagnostics={diagnostics} canViewInternalDiagnostics={canViewInternalDiagnostics} /> : null}
+      {visibleActiveTab === "evidence" ? (
+        <EvidenceTab
+          diagnostics={diagnostics}
+          results={results}
+          promptPreview={promptPreview}
+          canViewInternalDiagnostics={canViewInternalDiagnostics}
+        />
       ) : null}
-      {activeTab === "memory" ? (
+      {visibleActiveTab === "memory" && canViewInternalDiagnostics ? (
         <MemoryTab diagnostics={diagnostics} contextUsed={contextUsed} opsMetrics={opsMetrics} recentFeedback={recentFeedback} onCopyEvalCase={onCopyEvalCase} />
       ) : null}
-      {activeTab === "json" ? <RawJsonTab diagnostics={diagnostics} promptPreview={promptPreview} /> : null}
+      {visibleActiveTab === "json" && canViewInternalDiagnostics ? <RawJsonTab diagnostics={diagnostics} promptPreview={promptPreview} /> : null}
     </aside>
   );
 }
@@ -428,11 +520,11 @@ function DiagnosticTab({
   label,
   onSelect,
 }: {
-  tab: "timeline" | "tools" | "evidence" | "memory" | "json";
-  activeTab: "timeline" | "tools" | "evidence" | "memory" | "json";
+  tab: DiagnosticTabKey;
+  activeTab: DiagnosticTabKey;
   icon: React.ComponentType<{ size?: number }>;
   label: string;
-  onSelect: (tab: "timeline" | "tools" | "evidence" | "memory" | "json") => void;
+  onSelect: (tab: DiagnosticTabKey) => void;
 }) {
   const active = tab === activeTab;
 
@@ -455,34 +547,43 @@ function TimelineTab({
   diagnostics,
   intentAnalysis,
   safetyStatus,
+  canViewInternalDiagnostics,
 }: {
   diagnostics: ChatResponse | null;
   intentAnalysis?: IntentAnalysis;
   safetyStatus?: SafetyStatus;
+  canViewInternalDiagnostics: boolean;
 }) {
   const steps = diagnostics?.full_trace ?? [];
+  const [expandedSteps, setExpandedSteps] = useState<Record<string, boolean>>({});
+
+  function toggleStep(key: string) {
+    setExpandedSteps((current) => ({ ...current, [key]: !current[key] }));
+  }
 
   return (
     <>
       <DiagnosticSection title="流程时间线">
         {steps.length ? (
           <div className="space-y-2">
-            {steps.map((step, index) => (
-              <div key={`${step.step}-${index}`} className="rounded-work border border-line bg-white p-3 text-xs leading-5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-black text-ink">{step.step || `step_${index + 1}`}</span>
-                  <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
-                    {step.status || "-"} · {step.latency_ms ?? 0}ms
-                  </span>
-                </div>
-                {step.input_summary ? <p className="mt-2 text-muted">输入：{step.input_summary}</p> : null}
-                {step.output_summary ? <p className="mt-1 text-muted">输出：{step.output_summary}</p> : null}
-                {step.step === "generation_completed" ? <TokenUsageInline usage={getStepTokenUsage(step.metadata)} /> : null}
-              </div>
-            ))}
+            {steps.map((step, index) => {
+              const key = `${step.step}-${index}`;
+              return (
+                <TimelineStepCard
+                  key={key}
+                  step={step}
+                  index={index}
+                  expanded={Boolean(expandedSteps[key])}
+                  canViewInternalDiagnostics={canViewInternalDiagnostics}
+                  onToggle={() => toggleStep(key)}
+                />
+              );
+            })}
           </div>
-        ) : (
+        ) : canViewInternalDiagnostics ? (
           <TraceFallback diagnostics={diagnostics} />
+        ) : (
+          <EmptyState title="暂无流程" text="发送问题后展示处理状态。" compact />
         )}
       </DiagnosticSection>
       <DiagnosticSection title="意图与风险">
@@ -502,7 +603,93 @@ function TimelineTab({
   );
 }
 
-function ToolsTab({ diagnostics }: { diagnostics: ChatResponse | null }) {
+function TimelineStepCard({
+  step,
+  index,
+  expanded,
+  canViewInternalDiagnostics,
+  onToggle,
+}: {
+  step: NonNullable<ChatResponse["full_trace"]>[number];
+  index: number;
+  expanded: boolean;
+  canViewInternalDiagnostics: boolean;
+  onToggle: () => void;
+}) {
+  const status = step.status || "-";
+  const toneClass = getTimelineStatusTone(status);
+  const inputSummary = step.input_summary || "";
+  const outputSummary = step.output_summary || "";
+  const hasTokenUsage = step.step === "generation_completed" && Boolean(getStepTokenUsage(step.metadata));
+  const metadataSummary = buildTimelineMetadataSummary(step.metadata, canViewInternalDiagnostics);
+  const hasDetails = Boolean(inputSummary || outputSummary || hasTokenUsage || metadataSummary);
+
+  return (
+    <article className="rounded-work border border-line bg-white text-xs leading-5">
+      <button
+        className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left"
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-work bg-subtle font-black text-muted">
+              {index + 1}
+            </span>
+            <span className="truncate font-black text-ink">{formatTraceStepName(step.step, index)}</span>
+          </div>
+          {!expanded && outputSummary ? (
+            <p className="mt-1 line-clamp-1 pl-8 text-muted">{outputSummary}</p>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className={`rounded-full px-2 py-1 font-black ${toneClass}`}>
+            {formatTraceStatus(status)}
+          </span>
+          <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
+            {formatStepLatency(step.latency_ms)}
+          </span>
+          <ChevronDown
+            size={15}
+            className={`text-muted transition-transform ${expanded ? "rotate-180" : ""}`}
+          />
+        </div>
+      </button>
+      {expanded ? (
+        <div className="border-t border-line px-3 pb-3 pt-2">
+          {hasDetails ? (
+            <div className="space-y-2">
+              {inputSummary ? <TimelineDetailLine label="输入摘要" value={inputSummary} /> : null}
+              {outputSummary ? <TimelineDetailLine label="处理结果" value={outputSummary} /> : null}
+              {metadataSummary ? <TimelineDetailLine label="附加信息" value={metadataSummary} /> : null}
+              {hasTokenUsage ? <TokenUsageInline usage={getStepTokenUsage(step.metadata)} /> : null}
+            </div>
+          ) : (
+            <p className="text-muted">这个步骤只是状态标记，没有额外摘要。</p>
+          )}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function TimelineDetailLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-work bg-subtle p-2">
+      <div className="font-black text-muted">{label}</div>
+      <div className="mt-1 whitespace-pre-wrap break-words text-ink">{value}</div>
+    </div>
+  );
+}
+
+function ToolsTab({
+  diagnostics,
+  canViewInternalDiagnostics,
+}: {
+  diagnostics: ChatResponse | null;
+  canViewInternalDiagnostics: boolean;
+}) {
   const toolResults = diagnostics?.tool_results ?? [];
 
   return (
@@ -517,9 +704,16 @@ function ToolsTab({ diagnostics }: { diagnostics: ChatResponse | null }) {
                   {tool.status || "-"} · {tool.latency_ms ?? 0}ms
                 </span>
               </div>
-              <pre className="mono-block mt-2 max-h-36 overflow-auto whitespace-pre-wrap rounded-work bg-subtle p-2">
-                {JSON.stringify({ input: tool.input, output: tool.output, error_type: tool.error_type, retryable: tool.retryable }, null, 2)}
-              </pre>
+              {canViewInternalDiagnostics ? (
+                <pre className="mono-block mt-2 max-h-36 overflow-auto whitespace-pre-wrap rounded-work bg-subtle p-2">
+                  {JSON.stringify({ input: tool.input, output: tool.output, error_type: tool.error_type, retryable: tool.retryable }, null, 2)}
+                </pre>
+              ) : (
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  <BasisLine label="结果" value={summarizeToolResult(tool)} />
+                  <BasisLine label="处理" value={tool.error_type ? `${tool.error_type}${tool.retryable ? "，可重试" : ""}` : "已返回"} />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -534,10 +728,12 @@ function EvidenceTab({
   diagnostics,
   results,
   promptPreview,
+  canViewInternalDiagnostics,
 }: {
   diagnostics: ChatResponse | null;
   results: RetrievalResult[];
   promptPreview: RetrievalPromptPreviewResponse | null;
+  canViewInternalDiagnostics: boolean;
 }) {
   const citations = diagnostics?.evidence_citations ?? [];
   const promptContext = diagnostics?.prompt_context_items || promptPreview?.prompt_context_items || [];
@@ -557,36 +753,50 @@ function EvidenceTab({
                     {item.intent || item.category || "-"}
                   </span>
                   <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
-                    score {formatScore(item.score)}
+                    {item.knowledge_id || item.evidence_id || `kb_${index + 1}`}
                   </span>
                   <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
                     v{item.version ?? "-"}
                   </span>
+                  {item.updated_at ? (
+                    <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
+                      {item.updated_at}
+                    </span>
+                  ) : null}
                 </div>
                 <p className="font-black text-ink">{item.title || item.evidence_id || `evidence_${index + 1}`}</p>
+                {item.source ? <p className="mt-1 font-bold text-muted">来源：{item.source}</p> : null}
                 <p className="mt-1 text-muted">{item.quote || "-"}</p>
               </div>
             ))}
           </div>
         ) : results.length ? (
-          results.map((item) => <EvidenceCard key={`${item.rank}-${item.question}`} item={item} />)
+          results.map((item) => (
+            <EvidenceCard
+              key={`${item.rank}-${item.question}`}
+              item={item}
+              canViewInternalDiagnostics={canViewInternalDiagnostics}
+            />
+          ))
         ) : (
           <EmptyState title="暂无证据" text="发送问题后展示 primary/supporting evidence。" compact />
         )}
       </DiagnosticSection>
-      <DiagnosticSection title="prompt context">
-        <div className="space-y-2">
-          {promptContext.length ? (
-            promptContext.map((item) => (
-              <div key={`${item.rank}-${item.role}-${item.question}`} className="rounded-work bg-white p-2 text-xs leading-5">
-                <span className="font-black">{item.role}</span> · {item.display_title ?? item.question}
-              </div>
-            ))
-          ) : (
-            <p className="text-xs text-muted">暂无 prompt context。</p>
-          )}
-        </div>
-      </DiagnosticSection>
+      {canViewInternalDiagnostics ? (
+        <DiagnosticSection title="prompt context">
+          <div className="space-y-2">
+            {promptContext.length ? (
+              promptContext.map((item) => (
+                <div key={`${item.rank}-${item.role}-${item.question}`} className="rounded-work bg-white p-2 text-xs leading-5">
+                  <span className="font-black">{item.role}</span> · {item.display_title ?? item.question}
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-muted">暂无 prompt context。</p>
+            )}
+          </div>
+        </DiagnosticSection>
+      ) : null}
     </>
   );
 }
@@ -626,6 +836,7 @@ function MemoryTab({
       </DiagnosticSection>
       <DiagnosticSection title="ops metrics">
         <div className="grid grid-cols-2 gap-2 text-xs">
+          <MetricMini label="source" value={opsMetrics?.source || "-"} />
           <MetricMini label="requests" value={opsMetrics?.request_count} />
           <MetricMini label="failures" value={opsMetrics?.failure_count} />
           <MetricMini label="avg ms" value={opsMetrics?.average_latency_ms} />
@@ -633,6 +844,14 @@ function MemoryTab({
           <MetricMini label="empty retrieval" value={opsMetrics?.empty_retrieval_count} />
           <MetricMini label="reply rules" value={opsMetrics?.reply_rules_hit_count} />
           <MetricMini label="fallback" value={opsMetrics?.fallback_count} />
+          <MetricMini label="accepted" value={opsMetrics?.accepted_count} />
+          <MetricMini label="edited" value={opsMetrics?.edited_sent_count} />
+          <MetricMini label="handoff" value={opsMetrics?.human_handoff_count} />
+          <MetricMini label="bad case" value={opsMetrics?.bad_case_count} />
+          <MetricMini label="accept rate" value={formatRate(opsMetrics?.accepted_rate)} />
+          <MetricMini label="handoff rate" value={formatRate(opsMetrics?.human_handoff_rate)} />
+          <MetricMini label="avg tokens" value={formatTokenCount(opsMetrics?.average_tokens_per_request)} />
+          <MetricMini label="total tokens" value={formatTokenCount(opsMetrics?.total_tokens)} />
         </div>
       </DiagnosticSection>
       <DiagnosticSection title="recent bad cases">
@@ -688,7 +907,10 @@ function AnswerBasisCard({ diagnostics }: { diagnostics: ChatResponse }) {
     ?.map((tool) => `${tool.tool_name || "tool"}:${tool.status || "-"}`)
     .join("，");
   const fallbackApplied = diagnostics.safety_status?.fallback_applied || diagnostics.trace?.reply_rules_applied;
-  const handoffReason = diagnostics.handoff_ticket?.reason || diagnostics.handoff_ticket?.context_summary;
+  const handoffReason =
+    diagnostics.handoff_ticket?.reason ||
+    diagnostics.handoff_ticket?.context_summary ||
+    diagnostics.handoff_recommendation?.reason;
 
   return (
     <div className="rounded-work border border-line bg-white p-3 text-xs leading-5">
@@ -716,6 +938,24 @@ function BasisLine({ label, value }: { label: string; value: string }) {
       <div className="mt-1 line-clamp-3 text-ink">{value}</div>
     </div>
   );
+}
+
+function summarizeToolResult(tool: NonNullable<ChatResponse["tool_results"]>[number]) {
+  const output = tool.output;
+  if (output && typeof output === "object") {
+    const data = output as Record<string, unknown>;
+    const summary = data.summary || data.status_label || data.refund_status || data.delivery_status;
+    if (summary) {
+      return String(summary);
+    }
+  }
+  if (tool.status === "skipped") {
+    return "待补充订单信息";
+  }
+  if (tool.status === "failed") {
+    return "暂时无法查询";
+  }
+  return tool.status || "-";
 }
 
 function TraceFallback({ diagnostics }: { diagnostics: ChatResponse | null }) {
@@ -870,7 +1110,13 @@ function StatusPill({
   return <span className={`rounded-full px-2 py-1 font-black ${toneClass}`}>{`${label}: ${active ? "yes" : "no"}`}</span>;
 }
 
-function EvidenceCard({ item }: { item: RetrievalResult }) {
+function EvidenceCard({
+  item,
+  canViewInternalDiagnostics,
+}: {
+  item: RetrievalResult;
+  canViewInternalDiagnostics: boolean;
+}) {
   const penalty = item.direction_penalty ?? 0;
 
   return (
@@ -882,7 +1128,7 @@ function EvidenceCard({ item }: { item: RetrievalResult }) {
         <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-black text-leaf">
           {item.intent ?? "intent"}
         </span>
-        {penalty > 0 ? (
+        {canViewInternalDiagnostics && penalty > 0 ? (
           <span className="rounded-full bg-orange-50 px-2 py-1 text-[11px] font-black text-amberline">
             方向降权 {penalty.toFixed(2)}
           </span>
@@ -890,11 +1136,13 @@ function EvidenceCard({ item }: { item: RetrievalResult }) {
       </div>
       <p className="text-sm font-black">{item.question}</p>
       <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">{item.answer}</p>
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <Score label="score" value={item.score} />
-        <Score label="rerank" value={item.rerank_score} />
-        <Score label="vector" value={item.vector_score} />
-      </div>
+      {canViewInternalDiagnostics ? (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <Score label="score" value={item.score} />
+          <Score label="rerank" value={item.rerank_score} />
+          <Score label="vector" value={item.vector_score} />
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -939,8 +1187,103 @@ function formatConfidence(value: number) {
   return value <= 1 ? `${Math.round(value * 100)}%` : value.toFixed(2);
 }
 
-function formatScore(value?: number) {
-  return typeof value === "number" ? value.toFixed(3) : "-";
+function formatTraceStepName(step?: string, index = 0) {
+  const names: Record<string, string> = {
+    request_received: "接收请求",
+    memory_loaded: "读取上下文",
+    intent_detected: "识别意图",
+    risk_precheck: "风险预检",
+    order_tool_called: "订单工具",
+    retrieval_started: "开始检索",
+    rerank_completed: "召回与重排",
+    evidence_selected: "选择证据",
+    prompt_built: "构建提示词",
+    generation_completed: "生成回复",
+    reply_rules_checked: "规则与安全",
+    grounding_checked: "证据校验",
+    handoff_recommended: "转人工建议",
+    memory_updated: "更新记忆",
+    response_returned: "返回结果",
+  };
+  if (!step) {
+    return `步骤 ${index + 1}`;
+  }
+  return names[step] ? `${names[step]} · ${step}` : step;
+}
+
+function formatTraceStatus(status: string) {
+  const names: Record<string, string> = {
+    success: "成功",
+    degraded: "降级",
+    failed: "失败",
+    high_risk: "高风险",
+  };
+  return names[status] || status || "-";
+}
+
+function getTimelineStatusTone(status: string) {
+  if (status === "failed") {
+    return "bg-red-50 text-danger";
+  }
+  if (status === "degraded" || status === "high_risk") {
+    return "bg-orange-50 text-amberline";
+  }
+  if (status === "success") {
+    return "bg-emerald-50 text-leaf";
+  }
+  return "bg-subtle text-muted";
+}
+
+function formatStepLatency(value?: number) {
+  if (typeof value !== "number") {
+    return "未记录";
+  }
+  if (value <= 0) {
+    return "<1ms";
+  }
+  if (value < 1) {
+    return "<1ms";
+  }
+  if (value < 1000) {
+    return `${value.toFixed(value < 10 ? 2 : 1)}ms`;
+  }
+  return `${(value / 1000).toFixed(2)}s`;
+}
+
+function buildTimelineMetadataSummary(metadata?: Record<string, unknown>, includeInternal = false) {
+  if (!metadata) {
+    return "";
+  }
+
+  const parts: string[] = [];
+  const publicKeys = ["risk_level", "tool_count", "primary_intent", "used_fallback_prompt", "prompt_version"];
+  for (const key of publicKeys) {
+    const value = metadata[key];
+    if (value !== undefined && value !== null && value !== "") {
+      parts.push(`${key}: ${String(value)}`);
+    }
+  }
+
+  const tokenUsage = getStepTokenUsage(metadata);
+  if (tokenUsage?.total_tokens) {
+    parts.push(`tokens: ${formatTokenCount(tokenUsage.total_tokens)}`);
+  }
+
+  if (includeInternal) {
+    const hiddenKeys = Object.keys(metadata).filter((key) => !publicKeys.includes(key) && key !== "token_usage");
+    hiddenKeys.slice(0, 4).forEach((key) => {
+      const value = metadata[key];
+      if (value !== undefined && value !== null && value !== "") {
+        parts.push(`${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
+      }
+    });
+  }
+
+  return parts.join("；");
+}
+
+function formatRate(value?: number) {
+  return typeof value === "number" ? `${Math.round(value * 100)}%` : "-";
 }
 
 function formatTokenCount(value?: number) {

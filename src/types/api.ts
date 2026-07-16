@@ -80,15 +80,29 @@ export type ToolResult = {
 
 export type EvidenceCitation = {
   evidence_id?: string;
+  knowledge_id?: string;
   source_type?: string;
+  source?: string;
   category?: string;
   intent?: string;
   risk_level?: string;
   version?: string | number;
+  updated_at?: string;
   score?: number;
   evidence_role?: "primary" | "supporting" | string;
   quote?: string;
   title?: string;
+};
+
+export type PrdCitation = {
+  knowledge_id?: string;
+  title?: string;
+  category?: string;
+  version?: string | number;
+  snippet?: string;
+  score?: number;
+  updated_at?: string;
+  source?: string;
 };
 
 export type FullTraceStep = {
@@ -162,7 +176,14 @@ export type EvaluationMetrics = {
 };
 
 export type ChatResponse = {
+  request_id?: string;
   reply: string;
+  risk_level?: "low" | "medium" | "high" | "blocked" | string;
+  confidence_level?: "high" | "medium" | "low" | string;
+  need_human_review?: boolean;
+  human_review_reason?: string;
+  citations?: PrdCitation[];
+  conversation_status?: string;
   answer_basis?: string | Record<string, unknown>;
   evidence_citations?: EvidenceCitation[];
   tool_results?: ToolResult[];
@@ -179,6 +200,7 @@ export type ChatResponse = {
   safety_status?: SafetyStatus;
   confidence_score?: number;
   final_prompt?: string;
+  prompt_version?: string;
   retrieved_documents?: string[];
   retrieved_items?: RetrievalResult[];
   prompt_context_items?: PromptContextItem[];
@@ -198,6 +220,38 @@ export type ChatResponse = {
   mixed_supporting_intent?: boolean;
   risky_promises?: string[];
   needs_manual_review?: boolean;
+  review_action?: ChatReviewActionResponse;
+  handoff_recommendation?: {
+    recommended?: boolean;
+    reason?: string;
+    priority?: string;
+  };
+};
+
+export type ChatReviewAction = "accepted" | "edited_and_sent" | "human_handoff" | "marked_bad_case";
+
+export type ChatReviewActionRequest = {
+  request_id: string;
+  action: ChatReviewAction;
+  operator_id?: string;
+  operator_role?: string;
+  final_reply?: string;
+  reason?: string;
+};
+
+export type ChatReviewActionResponse = {
+  request_id: string;
+  session_id: string;
+  user_id: string;
+  order_id?: string | null;
+  action: ChatReviewAction;
+  status: string;
+  final_reply: string;
+  reason?: string;
+  handoff_ticket?: HandoffTicket | null;
+  audit_id?: number | null;
+  saved: boolean;
+  created_at: string;
 };
 
 export type ChatHistoryResponse = {
@@ -264,6 +318,7 @@ export type ExportEvalCaseResponse = {
 };
 
 export type OpsMetrics = {
+  source?: string;
   request_count: number;
   failure_count: number;
   average_latency_ms: number;
@@ -271,19 +326,39 @@ export type OpsMetrics = {
   empty_retrieval_count: number;
   reply_rules_hit_count: number;
   fallback_count: number;
+  accepted_count: number;
+  edited_sent_count: number;
+  human_handoff_count: number;
+  bad_case_count: number;
+  reviewed_count: number;
+  accepted_rate: number;
+  edited_sent_rate: number;
+  human_handoff_rate: number;
+  bad_case_rate: number;
+  token_recorded_count: number;
+  token_record_rate: number;
+  total_prompt_tokens: number;
+  total_completion_tokens: number;
+  total_tokens: number;
+  average_tokens_per_request: number;
 };
 
-export type KnowledgeStatus = "draft" | "approved" | "rejected" | "archived" | "published";
+export type KnowledgeStatus = "draft" | "pending_review" | "approved" | "rejected" | "archived" | "published" | "rollback";
 
 export type KnowledgeOpsItem = {
   id: number;
   base_id: string;
   version: number;
+  title: string;
   question: string;
   answer: string;
   category: string;
   intent: string;
   status: KnowledgeStatus;
+  owner: string;
+  source: string;
+  effective_at: string;
+  expired_at: string;
   review_note: string;
   created_at: string;
   updated_at: string;
@@ -291,10 +366,15 @@ export type KnowledgeOpsItem = {
 };
 
 export type KnowledgePayload = {
+  title?: string;
   question: string;
   answer: string;
   category: string;
   intent: string;
+  owner?: string;
+  source?: string;
+  effective_at?: string;
+  expired_at?: string;
 };
 
 export type KnowledgeListResponse = {
@@ -328,6 +408,69 @@ export type KnowledgePublishResponse = KnowledgePublishHistoryItem;
 export type KnowledgePublishHistoryResponse = {
   count: number;
   items: KnowledgePublishHistoryItem[];
+};
+
+export type PromptVersionItem = {
+  id: number;
+  version: string;
+  status: "draft" | "evaluation" | "approved" | "canary" | "production" | "rollback" | string;
+  system_prompt: string;
+  developer_prompt: string;
+  change_reason: string;
+  author: string;
+  evaluation_result: string;
+  effective_at: string;
+  created_at: string;
+  activated_at: string;
+  rolled_back_from: string;
+};
+
+export type PromptVersionPayload = {
+  version?: string;
+  system_prompt: string;
+  developer_prompt?: string;
+  change_reason?: string;
+  evaluation_result?: string;
+  effective_at?: string;
+};
+
+export type PromptVersionListResponse = {
+  count: number;
+  items: PromptVersionItem[];
+};
+
+export type AuditLogItem = {
+  id: number;
+  operator_id: string;
+  operator_role: string;
+  action_type: string;
+  object_type: string;
+  object_id: string;
+  request_id: string;
+  before_summary: string;
+  after_summary: string;
+  ip: string;
+  device_info: string;
+  created_at: string;
+};
+
+export type AuditLogListResponse = {
+  count: number;
+  items: AuditLogItem[];
+};
+
+export type ReleaseChecklistItem = {
+  name: string;
+  status: "pass" | "warn" | "fail" | string;
+  evidence: string;
+  next_step: string;
+};
+
+export type ReleaseChecklistResponse = {
+  ready: boolean;
+  failed_count: number;
+  warning_count: number;
+  items: ReleaseChecklistItem[];
 };
 
 export type ChatMessage = {

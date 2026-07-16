@@ -23,7 +23,8 @@ import {
   Star,
   Store as StoreIcon,
 } from "lucide-react";
-import { getChatHistory, sendChatPrompt } from "./api/chat";
+import { getAuditLogs } from "./api/audit";
+import { getChatHistory, sendChatPrompt, submitChatReviewAction } from "./api/chat";
 import { getCategories, getExamplesByCategory, searchExamples } from "./api/examples";
 import { exportEvalCase, getRecentFeedback, submitFeedback } from "./api/feedback";
 import {
@@ -40,7 +41,16 @@ import {
 import { getModelInfo } from "./api/model";
 import { getOpsMetrics } from "./api/ops";
 import { saveOrderState } from "./api/orders";
+import {
+  activatePromptVersion,
+  approvePromptVersion,
+  createPromptVersion,
+  getActivePromptVersion,
+  listPromptVersions,
+  rollbackLatestPromptVersion,
+} from "./api/prompt";
 import { getRetrievalConfig, previewRetrievalPrompt, searchRetrieval } from "./api/retrieval";
+import { getReleaseChecklist } from "./api/release";
 import {
   dishes,
   orderSteps,
@@ -57,7 +67,9 @@ import { KnowledgeOpsView } from "./features/knowledge/KnowledgeOpsView";
 import { ProjectShowcaseView } from "./features/showcase/ProjectShowcaseView";
 import type {
   ChatMessage,
+  ChatReviewAction,
   ChatResponse,
+  AuditLogItem,
   FeedbackItem,
   KnowledgeExample,
   KnowledgeOpsItem,
@@ -66,6 +78,9 @@ import type {
   ModelInfo,
   OpsMetrics,
   OrderStatePayload,
+  PromptVersionItem,
+  PromptVersionPayload,
+  ReleaseChecklistResponse,
   RetrievalConfig,
   RetrievalMode,
   RetrievalPromptPreviewResponse,
@@ -82,6 +97,8 @@ const storageKey = "takeout-rag-orders";
 const userStorageKey = "takeout-rag-user-id";
 const supportSessionStorageKey = "takeout-rag-support-sessions";
 const userAddress = "杭州西湖区文三路 168 号";
+const supportOperatorRole = "agent";
+const canViewInternalDiagnostics = ["qa", "admin"].includes(supportOperatorRole);
 const retrievalMode: RetrievalMode = "hybrid";
 const knowledgeExampleLimit = 20;
 const demoOrderPrefix = "DEMO-";
@@ -113,6 +130,7 @@ export default function App() {
   const [recentFeedback, setRecentFeedback] = useState<FeedbackItem[]>([]);
   const [opsMetrics, setOpsMetrics] = useState<OpsMetrics | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState("");
+  const [reviewStatus, setReviewStatus] = useState("");
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeOpsItem[]>([]);
   const [knowledgeTotal, setKnowledgeTotal] = useState(0);
   const [knowledgeStatus, setKnowledgeStatus] = useState("");
@@ -121,6 +139,12 @@ export default function App() {
   const [selectedKnowledgeCategory, setSelectedKnowledgeCategory] = useState("");
   const [knowledgeExamples, setKnowledgeExamples] = useState<KnowledgeExample[]>([]);
   const [knowledgeExamplesStatus, setKnowledgeExamplesStatus] = useState("");
+  const [promptVersions, setPromptVersions] = useState<PromptVersionItem[]>([]);
+  const [activePromptVersion, setActivePromptVersion] = useState<PromptVersionItem | null>(null);
+  const [promptOpsStatus, setPromptOpsStatus] = useState("");
+  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+  const [releaseChecklist, setReleaseChecklist] = useState<ReleaseChecklistResponse | null>(null);
+  const [releaseStatus, setReleaseStatus] = useState("");
 
   const selectedStore = stores.find((store) => store.id === selectedStoreId) ?? stores[0];
   const activeOrder = orders.find((order) => order.id === activeOrderId) ?? orders[0] ?? null;
@@ -157,6 +181,8 @@ export default function App() {
     void refreshKnowledgeItems();
     void refreshKnowledgePublishHistory();
     void refreshKnowledgeExamples();
+    void refreshPromptVersions();
+    void refreshGovernanceData();
   }, []);
 
   useGSAP(
@@ -273,6 +299,7 @@ export default function App() {
     setApiError("");
     setRagError("");
     setFeedbackStatus("");
+    setReviewStatus("");
     setLatestQuery(normalizedQuestion);
     setIsChatLoading(true);
     setMessages((current) => [
@@ -384,6 +411,7 @@ export default function App() {
     setLatestDiagnostics(null);
     setLatestQuery("");
     setFeedbackStatus("");
+    setReviewStatus("");
   }
 
   async function restoreSupportHistory(order: TakeoutOrder) {
@@ -427,8 +455,8 @@ export default function App() {
       buildDebugReport({
         order: activeOrder,
         results: retrievalResults,
-        prompt: latestDiagnostics?.final_prompt || promptPreview?.final_prompt || promptPreview?.prompt || "",
         diagnostics: latestDiagnostics,
+        includeInternalDiagnostics: canViewInternalDiagnostics,
       }),
     );
   }
@@ -441,6 +469,34 @@ export default function App() {
     if (metricsResult.status === "fulfilled") {
       setOpsMetrics(metricsResult.value);
     }
+  }
+
+  async function refreshGovernanceData() {
+    const [auditResult, releaseResult] = await Promise.allSettled([
+      getAuditLogs(),
+      getReleaseChecklist(),
+    ]);
+    const statusParts: string[] = [];
+
+    if (auditResult.status === "fulfilled") {
+      setAuditLogs(auditResult.value.items);
+    } else {
+      statusParts.push(getErrorMessage(auditResult.reason, "审计日志读取失败"));
+    }
+
+    if (releaseResult.status === "fulfilled") {
+      const checklist = releaseResult.value;
+      setReleaseChecklist(checklist);
+      statusParts.push(
+        checklist.ready
+          ? "上线检查通过"
+          : `上线检查：${checklist.failed_count} fail / ${checklist.warning_count} warn`,
+      );
+    } else {
+      statusParts.push(getErrorMessage(releaseResult.reason, "上线检查读取失败"));
+    }
+
+    setReleaseStatus(statusParts.join("；"));
   }
 
   async function sendFeedback(helpful: boolean, reason = "", expectedReply = "") {
@@ -458,7 +514,40 @@ export default function App() {
       trace: latestDiagnostics.trace,
     });
     setFeedbackStatus(helpful ? "已记录有帮助反馈" : "已保存 bad case");
-    await refreshOpsData();
+    await Promise.all([refreshOpsData(), refreshGovernanceData()]);
+  }
+
+  async function submitReviewAction(action: ChatReviewAction, finalReply = "", reason = "") {
+    if (!latestDiagnostics) {
+      setReviewStatus("暂无可审核的回答");
+      return;
+    }
+    const requestId = latestDiagnostics.request_id || latestDiagnostics.trace?.request_id;
+    if (!requestId) {
+      setReviewStatus("缺少 request_id，无法保存审核动作");
+      return;
+    }
+
+    const result = await submitChatReviewAction({
+      request_id: requestId,
+      action,
+      operator_id: userId,
+      operator_role: "agent",
+      final_reply: finalReply || latestDiagnostics.reply,
+      reason,
+    });
+    setLatestDiagnostics((current) =>
+      current
+        ? {
+            ...current,
+            conversation_status: result.status,
+            handoff_ticket: result.handoff_ticket ?? current.handoff_ticket,
+            review_action: result,
+          }
+        : current,
+    );
+    setReviewStatus(`已保存：${result.status}`);
+    await Promise.all([refreshOpsData(), refreshGovernanceData()]);
   }
 
   async function copyEvalCase(feedbackId: number) {
@@ -475,6 +564,19 @@ export default function App() {
   async function refreshKnowledgePublishHistory() {
     const result = await getKnowledgePublishHistory();
     setKnowledgePublishHistory(result.items);
+  }
+
+  async function refreshPromptVersions() {
+    try {
+      const [activeResult, listResult] = await Promise.all([
+        getActivePromptVersion(),
+        listPromptVersions(),
+      ]);
+      setActivePromptVersion(activeResult);
+      setPromptVersions(listResult.items);
+    } catch (error) {
+      setPromptOpsStatus(getErrorMessage(error, "Prompt 版本读取失败"));
+    }
   }
 
   async function refreshKnowledgeExamples(category?: string) {
@@ -547,9 +649,9 @@ export default function App() {
     await refreshKnowledgeItems();
   }
 
-  async function reviewKnowledge(id: number, status: "approved" | "rejected") {
+  async function reviewKnowledge(id: number, status: "pending_review" | "approved" | "rejected") {
     await reviewKnowledgeItem(id, status);
-    setKnowledgeStatus(status === "approved" ? "已审核通过" : "已审核拒绝");
+    setKnowledgeStatus(status === "pending_review" ? "已提交审核" : status === "approved" ? "已审核通过" : "已审核拒绝");
     await refreshKnowledgeItems();
   }
 
@@ -562,13 +664,32 @@ export default function App() {
   async function publishKnowledge() {
     const result = await publishApprovedKnowledge();
     setKnowledgeStatus(`发布 ${result.merged_count} 条，状态：${result.status}`);
-    await Promise.all([refreshKnowledgeItems(), refreshKnowledgePublishHistory()]);
+    await Promise.all([refreshKnowledgeItems(), refreshKnowledgePublishHistory(), refreshGovernanceData()]);
   }
 
   async function rollbackKnowledge() {
     const result = await rollbackLatestKnowledgePublish();
     setKnowledgeStatus(`已回滚最近发布，状态：${result.status}`);
-    await Promise.all([refreshKnowledgeItems(), refreshKnowledgePublishHistory()]);
+    await Promise.all([refreshKnowledgeItems(), refreshKnowledgePublishHistory(), refreshGovernanceData()]);
+  }
+
+  async function createPrompt(payload: PromptVersionPayload) {
+    const created = await createPromptVersion(payload);
+    setPromptOpsStatus(`已保存 Prompt 草稿：${created.version}`);
+    await Promise.all([refreshPromptVersions(), refreshGovernanceData()]);
+  }
+
+  async function approveAndActivatePrompt(id: number) {
+    const approved = await approvePromptVersion(id, "manual approved");
+    const activated = await activatePromptVersion(approved.id);
+    setPromptOpsStatus(`已启用 Prompt：${activated.version}`);
+    await Promise.all([refreshPromptVersions(), refreshGovernanceData()]);
+  }
+
+  async function rollbackPrompt() {
+    const result = await rollbackLatestPromptVersion();
+    setPromptOpsStatus(`已回滚到 Prompt：${result.version}`);
+    await Promise.all([refreshPromptVersions(), refreshGovernanceData()]);
   }
 
   return (
@@ -653,10 +774,13 @@ export default function App() {
             onCopyReport={copyDebugReport}
             onSubmitFeedback={sendFeedback}
             feedbackStatus={feedbackStatus}
+            onReviewAction={submitReviewAction}
+            reviewStatus={reviewStatus}
             recentFeedback={recentFeedback}
             opsMetrics={opsMetrics}
             onCopyEvalCase={copyEvalCase}
             onSelectScenario={selectSupportScenario}
+            canViewInternalDiagnostics={canViewInternalDiagnostics}
           />
         ) : null}
 
@@ -670,6 +794,12 @@ export default function App() {
             selectedCategory={selectedKnowledgeCategory}
             examples={knowledgeExamples}
             examplesStatus={knowledgeExamplesStatus}
+            promptVersions={promptVersions}
+            activePromptVersion={activePromptVersion}
+            promptOpsStatus={promptOpsStatus}
+            auditLogs={auditLogs}
+            releaseChecklist={releaseChecklist}
+            releaseStatus={releaseStatus}
             onBack={() => navigate("home")}
             onRefresh={refreshKnowledgeItems}
             onRefreshExamples={() => refreshKnowledgeExamples(selectedKnowledgeCategory)}
@@ -683,6 +813,11 @@ export default function App() {
             onPublishApproved={publishKnowledge}
             onRollbackLatest={rollbackKnowledge}
             onRefreshPublishHistory={refreshKnowledgePublishHistory}
+            onCreatePrompt={createPrompt}
+            onApproveActivatePrompt={approveAndActivatePrompt}
+            onRollbackPrompt={rollbackPrompt}
+            onRefreshPromptVersions={refreshPromptVersions}
+            onRefreshGovernanceData={refreshGovernanceData}
           />
         ) : null}
 
@@ -881,7 +1016,7 @@ function HomeView({
           <div className="col-span-2 rounded-[16px] bg-white p-4">
             <p className="text-sm font-black">RAG 解释侧栏</p>
             <p className="mt-2 text-xs leading-5 text-muted">
-              用户侧只看客服回复，演示侧可以查看检索证据、prompt context 和 trace。
+              用户侧只看客服回复，客服侧查看证据与工具摘要。
             </p>
           </div>
         </div>
@@ -1556,24 +1691,36 @@ function getRefundStatusForOrder(status: OrderStatus) {
 function buildDebugReport({
   order,
   results,
-  prompt,
   diagnostics,
+  includeInternalDiagnostics,
 }: {
   order: TakeoutOrder | null;
   results: RetrievalResult[];
-  prompt: string;
   diagnostics: ChatResponse | null;
+  includeInternalDiagnostics: boolean;
 }) {
-  return `# 外卖订单客服调试报告
+  const publicReport = `# 外卖订单客服处理摘要
 
 ## 订单
 ${order ? buildOrderContextMessage(order, "") : "-"}
 
 ## 检索证据
 ${results
-  .map((item) => `- #${item.rank} ${item.intent ?? "-"} score=${item.score?.toFixed(4) ?? "-"}：${item.question}`)
+  .map((item) => `- #${item.rank} ${item.intent ?? "-"}：${item.question}`)
   .join("\n") || "-"}
 
+## 处理结论
+- risk: ${diagnostics?.risk_level ?? "-"}
+- confidence: ${diagnostics?.confidence_level ?? "-"}
+- review: ${diagnostics?.human_review_reason ?? "-"}
+- tools: ${diagnostics?.tool_results?.map((tool) => `${tool.tool_name || "tool"}:${tool.status || "-"}`).join("，") || "-"}
+`;
+
+  if (!includeInternalDiagnostics) {
+    return publicReport;
+  }
+
+  return `${publicReport}
 ## Trace
 \`\`\`json
 ${JSON.stringify(diagnostics?.full_trace ?? diagnostics?.trace ?? {}, null, 2)}
@@ -1600,7 +1747,7 @@ ${JSON.stringify(
 
 ## Prompt
 \`\`\`text
-${prompt || "-"}
+${diagnostics?.final_prompt || "-"}
 \`\`\`
 `;
 }

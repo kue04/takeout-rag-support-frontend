@@ -17,12 +17,14 @@ export async function apiRequest<TResponse, TBody = unknown>(
   options: {
     method?: "GET" | "POST" | "PUT";
     body?: TBody;
+    headers?: Record<string, string>;
   } = {},
 ): Promise<TResponse> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: options.method ?? "GET",
     headers: {
       "Content-Type": "application/json",
+      ...options.headers,
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });

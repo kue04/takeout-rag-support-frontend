@@ -6,6 +6,11 @@ import type {
   RetrievalSearchResponse,
 } from "../types/api";
 
+const retrievalReadHeaders = {
+  "X-Operator-Id": "agent_demo",
+  "X-User-Role": "agent",
+};
+
 export async function getRetrievalConfig(): Promise<RetrievalConfig> {
   const response = await apiRequest<
     RetrievalConfig & {
@@ -14,7 +19,9 @@ export async function getRetrievalConfig(): Promise<RetrievalConfig> {
       model_rerank_weight?: number;
       min_vector_score?: number;
     }
-  >("/retrieval/config");
+  >("/retrieval/config", {
+    headers: retrievalReadHeaders,
+  });
 
   return {
     ...response,
@@ -31,6 +38,7 @@ export async function searchRetrieval(
   return apiRequest<RetrievalSearchResponse, RetrievalSearchRequest>("/retrieval/search", {
     method: "POST",
     body: payload,
+    headers: retrievalReadHeaders,
   });
 }
 
@@ -42,6 +50,7 @@ export async function previewRetrievalPrompt(
     {
       method: "POST",
       body: payload,
+      headers: retrievalReadHeaders,
     },
   );
 }

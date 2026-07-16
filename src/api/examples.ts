@@ -5,8 +5,15 @@ import type {
   ExamplesByCategoryResponse,
 } from "../types/api";
 
+const exampleReadHeaders = {
+  "X-Operator-Id": "knowledge_ops_demo",
+  "X-User-Role": "knowledge_ops",
+};
+
 export async function getCategories(): Promise<CategoriesResponse> {
-  return apiRequest<CategoriesResponse>("/examples/categories");
+  return apiRequest<CategoriesResponse>("/examples/categories", {
+    headers: exampleReadHeaders,
+  });
 }
 
 export async function getExamplesByCategory(
@@ -14,7 +21,9 @@ export async function getExamplesByCategory(
   limit: number,
 ): Promise<ExamplesByCategoryResponse> {
   const query = new URLSearchParams({ category, limit: String(limit) });
-  return apiRequest<ExamplesByCategoryResponse>(`/examples/by-category?${query}`);
+  return apiRequest<ExamplesByCategoryResponse>(`/examples/by-category?${query}`, {
+    headers: exampleReadHeaders,
+  });
 }
 
 export async function searchExamples(
@@ -26,6 +35,7 @@ export async function searchExamples(
     {
       method: "POST",
       body: { keyword, limit },
+      headers: exampleReadHeaders,
     },
   );
 }

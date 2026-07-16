@@ -1,10 +1,22 @@
 import { apiRequest } from "./client";
-import type { ChatHistoryResponse, ChatRequest, ChatResponse } from "../types/api";
+import type {
+  ChatHistoryResponse,
+  ChatRequest,
+  ChatResponse,
+  ChatReviewActionRequest,
+  ChatReviewActionResponse,
+} from "../types/api";
+
+const chatAgentHeaders = {
+  "X-Operator-Id": "agent_demo",
+  "X-User-Role": "agent",
+};
 
 export async function sendChatPrompt(payload: ChatRequest): Promise<ChatResponse> {
   return apiRequest<ChatResponse, ChatRequest>("/chat/prompt", {
     method: "POST",
     body: payload,
+    headers: chatAgentHeaders,
   });
 }
 
@@ -24,5 +36,20 @@ export async function getChatHistory(params: {
   if (params.session_id) {
     query.set("session_id", params.session_id);
   }
-  return apiRequest<ChatHistoryResponse>(`/chat/history?${query}`);
+  return apiRequest<ChatHistoryResponse>(`/chat/history?${query}`, {
+    headers: chatAgentHeaders,
+  });
+}
+
+export async function submitChatReviewAction(
+  payload: ChatReviewActionRequest,
+): Promise<ChatReviewActionResponse> {
+  return apiRequest<ChatReviewActionResponse, ChatReviewActionRequest>("/chat/review-action", {
+    method: "POST",
+    body: payload,
+    headers: {
+      "X-Operator-Id": payload.operator_id ?? "demo_agent",
+      "X-User-Role": payload.operator_role ?? "agent",
+    },
+  });
 }
