@@ -1,6 +1,7 @@
 import { Clipboard, ShieldAlert, Stethoscope } from "lucide-react";
 import ScoreBadge from "./ScoreBadge";
 import { AnswerStrategyBadge } from "./AnswerStrategyBadge";
+import { RetrievalOriginBadge } from "./RetrievalOriginBadge";
 import type {
   ChatResponse,
   EvaluationMetrics,
@@ -266,19 +267,23 @@ function RetrievedItemsBlock({ items }: { items: RetrievalResult[] }) {
             <span className="rounded-full border border-line bg-subtle px-2 py-1 text-[11px] font-extrabold text-muted">
               {item.category ?? "-"}
             </span>
+            <RetrievalOriginBadge origin={item.retrieval_origin} />
           </div>
           <div className="text-sm font-extrabold">{item.question}</div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <ScoreBadge label="rerank_score" value={item.rerank_score} tone="green" />
-            <ScoreBadge label="score" value={item.score} tone="neutral" />
-            <ScoreBadge label="model" value={item.model_rerank_score} tone="amber" />
-            <ScoreBadge label="vector" value={item.vector_score} tone="blue" />
+            <span className="rounded-full border border-line bg-white px-2 py-1 text-[11px] font-black">Dense rank {item.dense_rank ?? "-"}</span>
+            <span className="rounded-full border border-line bg-white px-2 py-1 text-[11px] font-black">BM25 rank {item.lexical_rank ?? "-"}</span>
+            <ScoreBadge label="RRF" value={item.rrf_score} tone="green" />
+            <ScoreBadge label="CrossEncoder" value={item.model_rerank_score} tone="amber" />
+            <ScoreBadge label="Dense" value={item.dense_score} tone="blue" />
+            <ScoreBadge label="BM25" value={item.lexical_score} tone="blue" />
             <ScoreBadge label="keyword_bonus" value={item.keyword_bonus} tone="amber" />
             <ScoreBadge
               label="direction_penalty"
               value={item.direction_penalty}
               tone={(item.direction_penalty ?? 0) > 0 ? "red" : "neutral"}
             />
+            <ScoreBadge label="Final" value={item.rerank_score} tone="green" />
           </div>
         </article>
       ))}

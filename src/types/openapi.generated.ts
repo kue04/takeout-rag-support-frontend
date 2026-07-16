@@ -1474,7 +1474,7 @@ export interface components {
              * Mode
              * @enum {string}
              */
-            mode: "vector" | "hybrid";
+            mode: "dense" | "hybrid";
             /** Count */
             count: number;
             /** Prompt */
@@ -1685,6 +1685,30 @@ export interface components {
             keyword_bonus: number;
             /** Direction Penalty */
             direction_penalty: number;
+            /** Dense Rank */
+            dense_rank?: number | null;
+            /** Lexical Rank */
+            lexical_rank?: number | null;
+            /**
+             * Dense Score
+             * @default 0
+             */
+            dense_score: number;
+            /**
+             * Lexical Score
+             * @default 0
+             */
+            lexical_score: number;
+            /**
+             * Rrf Score
+             * @default 0
+             */
+            rrf_score: number;
+            /**
+             * Retrieval Origin
+             * @default dense
+             */
+            retrieval_origin: string;
             /**
              * Reranker Degraded
              * @default false
@@ -1713,7 +1737,7 @@ export interface components {
              * @default hybrid
              * @enum {string}
              */
-            mode: "vector" | "hybrid";
+            mode: "dense" | "hybrid";
             /**
              * Limit
              * @default 5
@@ -1733,7 +1757,7 @@ export interface components {
              * Mode
              * @enum {string}
              */
-            mode: "vector" | "hybrid";
+            mode: "dense" | "hybrid";
             /** Count */
             count: number;
             /** Results */

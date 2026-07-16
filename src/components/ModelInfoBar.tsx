@@ -22,7 +22,7 @@ type ModelInfoBarProps = {
   onCopyReport: () => void;
 };
 
-const modes: RetrievalMode[] = ["vector", "hybrid"];
+const modes: RetrievalMode[] = ["dense", "hybrid"];
 
 export default function ModelInfoBar({
   modelInfo,

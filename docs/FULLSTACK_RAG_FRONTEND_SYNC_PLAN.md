@@ -254,3 +254,10 @@ npm run build
 - ModelInfoBar 展示 FAISS 预处理版本、Manifest 状态、文档数量、向量维度和构建时间。
 - Reranker 降级时显示显式状态；普通 agent 不显示内部异常文本，qa/admin 可查看错误原因。
 - 新增回答策略、知识运行状态和 Reranker 降级组件测试。
+
+### 2026-07-17：里程碑 3 多路召回展示
+
+- 检索模式更新为 `dense | hybrid`；当前工程未持久化 mode，因此不存在旧 `vector` localStorage 写回。
+- Retrieval、Diagnostics 和客服证据卡同步展示 Dense/BM25 rank、两路原始分、RRF、CrossEncoder、规则加减分、最终分和召回来源。
+- 召回来源使用四类固定状态：双路命中、BM25 补召回、Dense only、规则补召回。
+- Release 页面直接展示后端 `retrieval_v2` Gate；当前延迟门槛失败会显示 fail，不能被总通过率掩盖。

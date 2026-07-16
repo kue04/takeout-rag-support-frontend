@@ -3,6 +3,7 @@ import { Play, TextSearch } from "lucide-react";
 import DiagnosticsPanel from "./DiagnosticsPanel";
 import ScoreBadge from "./ScoreBadge";
 import { RerankerStatus } from "./RerankerStatus";
+import { RetrievalOriginBadge } from "./RetrievalOriginBadge";
 import type {
   ChatResponse,
   RetrievalMode,
@@ -112,6 +113,7 @@ function RetrievalCard({ result }: RetrievalCardProps) {
             <span className="rounded-full border border-line bg-subtle px-2.5 py-1 text-[11px] font-extrabold text-muted">
               {result.category ?? "未分类"}
             </span>
+            <RetrievalOriginBadge origin={result.retrieval_origin} />
           </div>
           <h3 className="mt-2 text-sm font-extrabold leading-5">
             {result.display_title ?? result.question}
@@ -125,16 +127,19 @@ function RetrievalCard({ result }: RetrievalCardProps) {
         </div>
       ) : null}
       <div className="mt-3 flex flex-wrap gap-2">
-        <ScoreBadge label="rerank_score" value={result.rerank_score} tone="green" />
-        <ScoreBadge label="score" value={result.score} tone="neutral" />
-        <ScoreBadge label="model" value={result.model_rerank_score} tone="amber" />
-        <ScoreBadge label="vector" value={result.vector_score} tone="blue" />
+        <span className="rounded-full border border-line bg-white px-2 py-1 text-[11px] font-black">Dense rank {result.dense_rank ?? "-"}</span>
+        <span className="rounded-full border border-line bg-white px-2 py-1 text-[11px] font-black">BM25 rank {result.lexical_rank ?? "-"}</span>
+        <ScoreBadge label="RRF" value={result.rrf_score} tone="green" />
+        <ScoreBadge label="CrossEncoder" value={result.model_rerank_score} tone="amber" />
+        <ScoreBadge label="Dense score" value={result.dense_score} tone="blue" />
+        <ScoreBadge label="BM25 score" value={result.lexical_score} tone="blue" />
         <ScoreBadge label="keyword_bonus" value={result.keyword_bonus} tone="amber" />
         <ScoreBadge
           label="direction_penalty"
           value={result.direction_penalty}
           tone={penalty > 0 ? "red" : "neutral"}
         />
+        <ScoreBadge label="Final score" value={result.rerank_score} tone="green" />
       </div>
     </article>
   );

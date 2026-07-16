@@ -21,6 +21,7 @@ import {
 import { EmptyState } from "../../components/EmptyState";
 import { AnswerStrategyBadge } from "../../components/AnswerStrategyBadge";
 import { RerankerStatus } from "../../components/RerankerStatus";
+import { RetrievalOriginBadge } from "../../components/RetrievalOriginBadge";
 import { Score } from "../../components/Score";
 import { supportQuestions, type OrderStatus, type TakeoutOrder } from "../../data/marketplace";
 import type {
@@ -1136,6 +1137,7 @@ function EvidenceCard({
         <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-black text-leaf">
           {item.intent ?? "intent"}
         </span>
+        <RetrievalOriginBadge origin={item.retrieval_origin} />
         {canViewInternalDiagnostics && penalty > 0 ? (
           <span className="rounded-full bg-orange-50 px-2 py-1 text-[11px] font-black text-amberline">
             方向降权 {penalty.toFixed(2)}
@@ -1146,9 +1148,11 @@ function EvidenceCard({
       <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">{item.answer}</p>
       {canViewInternalDiagnostics ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
-          <Score label="score" value={item.score} />
-          <Score label="rerank" value={item.rerank_score} />
-          <Score label="vector" value={item.vector_score} />
+          <span className="rounded-full bg-subtle px-2 py-1 text-[11px] font-black">Dense #{item.dense_rank ?? "-"}</span>
+          <span className="rounded-full bg-subtle px-2 py-1 text-[11px] font-black">BM25 #{item.lexical_rank ?? "-"}</span>
+          <Score label="RRF" value={item.rrf_score} />
+          <Score label="CrossEncoder" value={item.model_rerank_score} />
+          <Score label="Final" value={item.rerank_score} />
         </div>
       ) : null}
     </article>
