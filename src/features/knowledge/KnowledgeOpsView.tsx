@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { EmptyState } from "../../components/EmptyState";
 import KnowledgeBrowser from "../../components/KnowledgeBrowser";
+import { getKnowledgeRuntimeStatus } from "./knowledgeRuntimeStatus";
 import type {
   AuditLogItem,
   KnowledgeExample,
@@ -88,11 +89,14 @@ export function KnowledgeOpsView({
     intent: "",
     owner: "knowledge_ops",
     source: "knowledge_ops",
+    effective_at: "",
+    expired_at: "",
   });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState("");
   const [activeList, setActiveList] = useState<"current" | "ops">("current");
+  const [expandedBaseIds, setExpandedBaseIds] = useState<Set<string>>(() => new Set());
   const [promptForm, setPromptForm] = useState<PromptVersionPayload>({
     system_prompt: "",
     developer_prompt: "",
@@ -110,6 +114,8 @@ export function KnowledgeOpsView({
       intent: item.intent,
       owner: item.owner,
       source: item.source,
+      effective_at: toDatetimeLocal(item.effective_at),
+      expired_at: toDatetimeLocal(item.expired_at),
     });
   }
 
@@ -123,6 +129,8 @@ export function KnowledgeOpsView({
       intent: "",
       owner: "knowledge_ops",
       source: "curated_seed",
+      effective_at: "",
+      expired_at: "",
     });
   }
 
@@ -135,6 +143,8 @@ export function KnowledgeOpsView({
       intent: form.intent.trim(),
       owner: form.owner?.trim() || "knowledge_ops",
       source: form.source?.trim() || "knowledge_ops",
+      effective_at: toUtcIso(form.effective_at),
+      expired_at: toUtcIso(form.expired_at),
     };
     if (!payload.question || !payload.answer || !payload.category || !payload.intent) {
       return;
@@ -145,7 +155,7 @@ export function KnowledgeOpsView({
       await onCreate(payload);
     }
     setEditingId(null);
-    setForm({ title: "", question: "", answer: "", category: "", intent: "", owner: "knowledge_ops", source: "knowledge_ops" });
+    setForm({ title: "", question: "", answer: "", category: "", intent: "", owner: "knowledge_ops", source: "knowledge_ops", effective_at: "", expired_at: "" });
   }
 
   async function submitPromptVersion() {
@@ -160,6 +170,30 @@ export function KnowledgeOpsView({
     }
     await onCreatePrompt(payload);
     setPromptForm({ system_prompt: "", developer_prompt: "", change_reason: "", evaluation_result: "" });
+  }
+
+  const latestVersionByBaseId = new Map<string, number>();
+  const versionCountByBaseId = new Map<string, number>();
+  for (const item of items) {
+    const key = knowledgeGroupKey(item);
+    latestVersionByBaseId.set(key, Math.max(latestVersionByBaseId.get(key) ?? 0, item.version));
+    versionCountByBaseId.set(key, (versionCountByBaseId.get(key) ?? 0) + 1);
+  }
+  const visibleItems = items.filter((item) => {
+    const key = knowledgeGroupKey(item);
+    return item.version === latestVersionByBaseId.get(key) || expandedBaseIds.has(key);
+  });
+
+  function toggleVersionHistory(baseId: string) {
+    setExpandedBaseIds((current) => {
+      const next = new Set(current);
+      if (next.has(baseId)) {
+        next.delete(baseId);
+      } else {
+        next.add(baseId);
+      }
+      return next;
+    });
   }
 
   return (
@@ -197,6 +231,16 @@ export function KnowledgeOpsView({
               <div className="grid gap-2 md:grid-cols-2">
                 <input className="h-10 w-full rounded-work border border-line px-3 text-sm outline-none" placeholder="owner" value={form.owner ?? ""} onChange={(event) => setForm({ ...form, owner: event.target.value })} />
                 <input className="h-10 w-full rounded-work border border-line px-3 text-sm outline-none" placeholder="source" value={form.source ?? ""} onChange={(event) => setForm({ ...form, source: event.target.value })} />
+              </div>
+              <div className="grid gap-2 md:grid-cols-2">
+                <label className="text-xs font-bold text-muted">
+                  生效时间（本地时间）
+                  <input type="datetime-local" className="mt-1 h-10 w-full rounded-work border border-line px-3 text-sm font-normal text-ink outline-none" value={form.effective_at ?? ""} onChange={(event) => setForm({ ...form, effective_at: event.target.value })} />
+                </label>
+                <label className="text-xs font-bold text-muted">
+                  过期时间（本地时间）
+                  <input type="datetime-local" className="mt-1 h-10 w-full rounded-work border border-line px-3 text-sm font-normal text-ink outline-none" value={form.expired_at ?? ""} onChange={(event) => setForm({ ...form, expired_at: event.target.value })} />
+                </label>
               </div>
               <textarea className="min-h-20 w-full rounded-work border border-line p-3 text-sm outline-none" placeholder="用户问题" value={form.question} onChange={(event) => setForm({ ...form, question: event.target.value })} />
               <textarea className="min-h-28 w-full rounded-work border border-line p-3 text-sm outline-none" placeholder="标准回答" value={form.answer} onChange={(event) => setForm({ ...form, answer: event.target.value })} />
@@ -428,14 +472,26 @@ export function KnowledgeOpsView({
             />
           ) : (
           <div className="space-y-3">
-            {items.length ? (
-              items.map((item) => (
+            {visibleItems.length ? (
+              visibleItems.map((item) => {
+                const groupKey = knowledgeGroupKey(item);
+                const latestVersion = latestVersionByBaseId.get(groupKey) ?? item.version;
+                const runtimeStatus = getKnowledgeRuntimeStatus(item, new Date(), latestVersion);
+                const hasHistory = (versionCountByBaseId.get(groupKey) ?? 0) > 1;
+                const isLatest = item.version === latestVersion;
+                return (
                 <article key={item.id} className="rounded-work border border-line bg-subtle p-3">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <span className="rounded-full bg-ink px-2 py-1 text-[11px] font-black text-white">v{item.version}</span>
                     <span className="rounded-full border border-line bg-white px-2 py-1 text-[11px] font-black">{item.status}</span>
+                    <span className={`rounded-full px-2 py-1 text-[11px] font-black ${runtimeStatus.className}`}>{runtimeStatus.label}</span>
                     <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-black text-leaf">{item.category}</span>
                     <span className="rounded-full bg-white px-2 py-1 text-[11px] font-black text-muted">{item.intent}</span>
+                    {isLatest && hasHistory ? (
+                      <button className="rounded-full border border-line bg-white px-2 py-1 text-[11px] font-black text-muted" type="button" onClick={() => toggleVersionHistory(groupKey)}>
+                        {expandedBaseIds.has(groupKey) ? "收起历史版本" : "展开历史版本"}
+                      </button>
+                    ) : null}
                   </div>
                   <h3 className="text-sm font-black">{item.title || item.question}</h3>
                   <p className="mt-1 text-xs font-bold text-muted">{item.owner} · {item.source}</p>
@@ -465,7 +521,8 @@ export function KnowledgeOpsView({
                     </button>
                   </div>
                 </article>
-              ))
+                );
+              })
             ) : (
               <EmptyState title="暂无知识运营条目" text="先新增一条知识草稿，或调整筛选条件。" compact />
             )}
@@ -484,6 +541,29 @@ function MetricTile({ label, value }: { label: string; value: string | number })
       <div className="mt-1 text-[10px] font-bold text-muted">{label}</div>
     </div>
   );
+}
+
+function knowledgeGroupKey(item: KnowledgeOpsItem) {
+  return item.base_id || String(item.id);
+}
+
+function toDatetimeLocal(value?: string) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value.slice(0, 16);
+  }
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function toUtcIso(value?: string) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
 }
 
 function statusClass(status: string) {

@@ -80,6 +80,16 @@ export default function ModelInfoBar({
             label="reranker"
             value={retrievalConfig?.reranker_model ?? "未返回"}
           />
+          <StatusCell
+            icon={<GitBranch size={16} />}
+            label="index"
+            value={`${retrievalConfig?.vector_preprocessing_version || "未构建"} · ${retrievalConfig?.vector_manifest_status || "missing"}`}
+          />
+          <StatusCell
+            icon={<Activity size={16} />}
+            label="knowledge"
+            value={`${retrievalConfig?.vector_document_count ?? 0} docs · ${retrievalConfig?.vector_dimension ?? 0}d`}
+          />
         </div>
 
         <div className="rounded-work border border-line bg-subtle p-2">
@@ -145,6 +155,7 @@ export default function ModelInfoBar({
           <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold text-muted">
             <span>rerank_weight: {formatValue(retrievalConfig?.rerank_weight)}</span>
             <span>默认阈值: {formatValue(retrievalConfig?.default_min_score)}</span>
+            <span>索引构建: {formatBuiltAt(retrievalConfig?.vector_built_at)}</span>
             <span>
               reply rules:{" "}
               {retrievalConfig?.reply_rules_enabled
@@ -176,6 +187,14 @@ function StatusCell({ icon, label, value }: StatusCellProps) {
       </div>
     </div>
   );
+}
+
+function formatBuiltAt(value?: string) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
 function clampNumber(value: string, min: number, max: number) {

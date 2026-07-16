@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Play, TextSearch } from "lucide-react";
 import DiagnosticsPanel from "./DiagnosticsPanel";
 import ScoreBadge from "./ScoreBadge";
+import { RerankerStatus } from "./RerankerStatus";
 import type {
   ChatResponse,
   RetrievalMode,
@@ -72,6 +73,7 @@ export default function RetrievalPanel({
       </form>
 
       <div className="flex-1 overflow-auto p-4">
+        <RerankerStatus results={results} showInternalError />
         {isLoading ? <div className="text-sm font-bold text-muted">检索中...</div> : null}
         {!isLoading && results.length === 0 ? (
           <div className="rounded-work border border-line bg-panel p-4 text-sm text-muted">

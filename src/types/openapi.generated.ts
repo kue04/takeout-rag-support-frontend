@@ -715,6 +715,12 @@ export interface components {
              * @default
              */
             answer_basis: string;
+            /**
+             * Answer Strategy
+             * @default model_reply
+             * @enum {string}
+             */
+            answer_strategy: "model_reply" | "composer_repair" | "safety_fallback";
             /** Evidence Citations */
             evidence_citations?: {
                 [key: string]: unknown;
@@ -1570,6 +1576,31 @@ export interface components {
             faiss_docs_path: string;
             /** Reply Rules Enabled */
             reply_rules_enabled: boolean;
+            /**
+             * Vector Preprocessing Version
+             * @default
+             */
+            vector_preprocessing_version: string;
+            /**
+             * Vector Document Count
+             * @default 0
+             */
+            vector_document_count: number;
+            /**
+             * Vector Dimension
+             * @default 0
+             */
+            vector_dimension: number;
+            /**
+             * Vector Built At
+             * @default
+             */
+            vector_built_at: string;
+            /**
+             * Vector Manifest Status
+             * @default missing
+             */
+            vector_manifest_status: string;
         };
         /** RecentFeedbackResponse */
         RecentFeedbackResponse: {
@@ -1654,6 +1685,16 @@ export interface components {
             keyword_bonus: number;
             /** Direction Penalty */
             direction_penalty: number;
+            /**
+             * Reranker Degraded
+             * @default false
+             */
+            reranker_degraded: boolean;
+            /**
+             * Reranker Error
+             * @default
+             */
+            reranker_error: string;
             /** Category */
             category: string;
             /** Intent */

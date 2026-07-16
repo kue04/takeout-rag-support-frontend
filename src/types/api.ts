@@ -11,6 +11,11 @@ export type RetrievalConfig = {
   default_min_score?: number;
   reply_rules_enabled?: boolean;
   reply_rules_status?: string;
+  vector_preprocessing_version?: string;
+  vector_document_count?: number;
+  vector_dimension?: number;
+  vector_built_at?: string;
+  vector_manifest_status?: string;
 };
 
 export type RetrievalResult = ApiSchemas["RetrievalResultItem"];
@@ -22,6 +27,7 @@ export type PromptContextItem = RetrievalResult & {
 };
 
 export type ChatRequest = ApiSchemas["ChatRequest"];
+export type AnswerStrategy = ApiSchemas["ChatResponse"]["answer_strategy"];
 
 export type IntentAnalysis = {
   primary_intent?: string;
@@ -168,6 +174,7 @@ export type ChatResponse = {
   citations?: PrdCitation[];
   conversation_status?: string;
   answer_basis?: string | Record<string, unknown>;
+  answer_strategy?: AnswerStrategy;
   evidence_citations?: EvidenceCitation[];
   tool_results?: ToolResult[];
   memory_snapshot?: MemorySnapshot;

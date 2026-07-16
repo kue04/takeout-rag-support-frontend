@@ -246,3 +246,11 @@ npm run build
 - 普通客服聊天已删除并行 `/retrieval/search` 和 `/retrieval/prompt-preview` 调用，证据展示改用 `/chat/prompt` 返回的 `retrieved_items`。
 - 新增 Vitest 基础设施及两个目标测试：请求构造、Header/AbortSignal。
 - 验收命令：`npm run types:api`、`npm run test`、`npm run build`。
+
+### 2026-07-17：里程碑 2 前端同步
+
+- 诊断面板展示 `model_reply`、`composer_repair`、`safety_fallback` 三类回答策略。
+- 知识表单增加生效/过期时间输入，提交时转换为 UTC；知识列表显示运行状态并可展开同一 `base_id` 的历史版本。
+- ModelInfoBar 展示 FAISS 预处理版本、Manifest 状态、文档数量、向量维度和构建时间。
+- Reranker 降级时显示显式状态；普通 agent 不显示内部异常文本，qa/admin 可查看错误原因。
+- 新增回答策略、知识运行状态和 Reranker 降级组件测试。

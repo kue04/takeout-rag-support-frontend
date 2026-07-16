@@ -19,6 +19,8 @@ import {
   X,
 } from "lucide-react";
 import { EmptyState } from "../../components/EmptyState";
+import { AnswerStrategyBadge } from "../../components/AnswerStrategyBadge";
+import { RerankerStatus } from "../../components/RerankerStatus";
 import { Score } from "../../components/Score";
 import { supportQuestions, type OrderStatus, type TakeoutOrder } from "../../data/marketplace";
 import type {
@@ -467,6 +469,12 @@ function RagPanel({
       {ragError ? (
         <div className="mb-3 rounded-work border border-red-200 bg-red-50 p-3 text-xs font-bold leading-5 text-red-700">
           {ragError}
+        </div>
+      ) : null}
+      <RerankerStatus results={results} showInternalError={canViewInternalDiagnostics} />
+      {diagnostics?.answer_strategy ? (
+        <div className="mb-3">
+          <AnswerStrategyBadge strategy={diagnostics.answer_strategy} />
         </div>
       ) : null}
       <div className="mb-3 grid grid-cols-2 gap-2 text-xs">

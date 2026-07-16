@@ -1,5 +1,6 @@
 import { Clipboard, ShieldAlert, Stethoscope } from "lucide-react";
 import ScoreBadge from "./ScoreBadge";
+import { AnswerStrategyBadge } from "./AnswerStrategyBadge";
 import type {
   ChatResponse,
   EvaluationMetrics,
@@ -59,6 +60,7 @@ export default function DiagnosticsPanel({ response, promptPreview }: Diagnostic
 
       <div className="space-y-4 p-3">
         <InfoCallout text={layerLabels[suggestedLayer] ?? `建议排查 ${suggestedLayer}。`} />
+        <AnswerStrategyBadge strategy={response?.answer_strategy} />
         {response ? <RiskBlock response={response} /> : null}
         {hasEvaluation ? (
           <>
