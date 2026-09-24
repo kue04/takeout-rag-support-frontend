@@ -1,64 +1,128 @@
-export type RetrievalMode = "vector" | "hybrid";
+/**
+ * 前端类型层（2026-09-23 重构 · P0-4）
+ *
+ * 规则：
+ * 1. **接口返回值的形状以 `./backendContract.ts` 为准**（那份是 `scripts/export_frontend_contract.py`
+ *    从后端 OpenAPI 生成的，禁止手抄）。本文件不再复写任何端点响应字段。
+ * 2. 本文件只放两类东西：
+ *    a) 对生成类型的**直接别名**（为了让业务代码少写一层命名空间）；
+ *    b) **页面 ViewModel** —— 只对契约里被标成 `Record<string, unknown>` / `object` 的字段
+ *       做收窄（TypeScript 需要具体字段名才能访问）。收窄不新增字段、不伪造字段。
+ * 3. 后端新增可选字段不会破坏这里；**字段被删除或改名是破坏性变更**，
+ *    升级时先 diff `docs/frontend/openapi.json`，再改本文件。
+ *
+ * 漂移修正记录：旧版把 `/retrieval/search` 定义成 `RetrievalSearchResponse`，
+ * 真实响应是 `ChunkRetrievalResponse`（B7 换过语义）。现已分开：
+ * - `RetrievalSearchResponse` → `/retrieval/search-demo`（演示路径 · 种子 FAQ）
+ * - `ChunkRetrievalResponse` → `/retrieval/search`（正式路径 · chunk 级）
+ */
 
-export type RetrievalConfig = {
-  embedding_model?: string;
-  reranker_model?: string;
-  rerank_weight?: number;
-  default_min_score?: number;
-  reply_rules_enabled?: boolean;
-  reply_rules_status?: string;
-};
+import type * as Contract from "./backendContract";
 
-export type RetrievalResult = {
-  rank: number;
-  score: number;
-  rerank_score?: number;
-  model_rerank_score?: number;
-  vector_score?: number;
-  keyword_bonus?: number;
-  direction_penalty?: number;
-  category?: string;
-  intent?: string;
-  question: string;
-  answer: string;
-  role?: "primary" | "supporting" | string;
-  evidence_strength?: string;
-  display_title?: string;
-  evidence_summary?: string;
-};
+export type * from "./backendContract";
 
-export type PromptContextItem = RetrievalResult & {
-  role: "primary" | "supporting" | string;
-  used_primary_evidence?: boolean;
-  mixed_supporting_intent?: boolean;
-};
+/* ------------------------------------------------------------------ *
+ * a) 直接别名：形状一律来自生成契约
+ * ------------------------------------------------------------------ */
 
-export type ChatRequest = {
-  message: string;
-  user_id?: string;
-  session_id?: string | null;
-  order_id?: string | null;
-};
+export type ApiChatRequest = Contract.ChatRequest;
+export type ChatReviewAction = Contract.ChatReviewActionRequest["action"];
+export type ChatReviewActionRequest = Contract.ChatReviewActionRequest;
+export type ChatReviewActionResponse = Contract.ChatReviewActionResponse;
+export type PromptContextItem = Contract.PromptContextItemResponse;
+
+export type FeedbackRequest = Contract.FeedbackRequest;
+export type FeedbackItem = Contract.FeedbackItem;
+export type RecentFeedbackResponse = Contract.RecentFeedbackResponse;
+export type ExportEvalCaseResponse = Contract.ExportEvalCaseResponse;
+
+export type OpsMetrics = Contract.OpsMetricsResponse;
+export type ModelInfo = Contract.ModelInfoResponse;
+
+export type KnowledgeItem = Contract.KnowledgeItem;
+export type KnowledgePayload = Contract.KnowledgeItemPayload;
+export type KnowledgeListResponse = Contract.KnowledgeListResponse;
+export type KnowledgeExportResponse = Contract.KnowledgeExportResponse;
+export type KnowledgePublishHistoryItem = Contract.KnowledgePublishHistoryItem;
+export type KnowledgePublishHistoryResponse = Contract.KnowledgePublishHistoryResponse;
+export type KnowledgePublishResponse = Contract.KnowledgePublishResponse;
+
+export type PromptVersionItem = Contract.PromptVersionItem;
+export type PromptVersionPayload = Contract.PromptVersionPayload;
+export type PromptVersionListResponse = Contract.PromptVersionListResponse;
+
+export type AuditLogItem = Contract.AuditLogItem;
+export type AuditLogListResponse = Contract.AuditLogListResponse;
+export type ReleaseChecklistItem = Contract.ReleaseChecklistItem;
+export type ReleaseChecklistResponse = Contract.ReleaseChecklistResponse;
+
+export type OrderStatePayload = Contract.OrderStateRequest;
+export type OrderStateResponse = Contract.OrderStateResponse;
+
+export type CategoriesResponse = Contract.CategoriesResponse;
+export type ExamplesByCategoryResponse = Contract.ExamplesByCategoryResponse;
+export type ExampleSearchResponse = Contract.SearchExamplesResponse;
+export type KnowledgeExample = Contract.ExampleItem;
+
+export type RetrievalMode = NonNullable<Contract.RetrievalSearchRequest["mode"]>;
+export type RetrievalConfig = Contract.RagConfigResponse;
+
+/* --- 向后兼容别名：旧代码用的名字，指向同一个契约类型 --- */
+export type KnowledgeOpsItem = Contract.KnowledgeItem;
+export type RetrievalResult = Contract.RetrievalResultItem;
+export type RetrievalPromptPreviewResponse = Contract.PromptPreviewResponse;
+/** @deprecated 用 ChatRequest 的契约别名 `ApiChatRequest`。 */
+export type ChatRequest = Contract.ChatRequest;
+
+/** 演示路径（A 轨 · 种子 FAQ，无权限过滤）请求/响应。 */
+export type RetrievalSearchRequest = Contract.RetrievalSearchRequest;
+export type RetrievalResultItem = Contract.RetrievalResultItem;
+export type RetrievalSearchResponse = Contract.RetrievalSearchResponse;
+export type PromptPreviewResponse = Contract.PromptPreviewResponse;
+
+/** 正式路径（chunk 级，服务端权限过滤）请求/响应。**注意：没有 `mode` 字段。** */
+export type ChunkRetrievalRequest = Contract.ChunkRetrievalRequest;
+export type ChunkRetrievalItem = Contract.ChunkRetrievalItem;
+export type ChunkIndexInfo = Contract.ChunkIndexInfo;
+export type ChunkRetrievalResponse = Contract.ChunkRetrievalResponse;
+
+export type IndexRebuildResponse = Contract.IndexRebuildResponse;
+export type DocumentUploadResponse = Contract.DocumentUploadResponse;
+export type IngestionJobDetail = Contract.IngestionJobDetail;
+export type DocumentDetail = Contract.DocumentDetail;
+export type DocumentVersionListResponse = Contract.DocumentVersionListResponse;
+export type ParseWarningItem = Contract.ParseWarningItem;
+
+export type ChatHistoryMessage = Contract.ChatHistoryMessage;
+export type ChatHistoryResponse = Contract.ChatHistoryResponse;
+
+/** 抽干诊断数据只能从**当次** `/chat/prompt` 的 `trace` 拿，后端没有 `GET /traces/{id}`。 */
+export type ChatTrace = Contract.ChatTrace;
+
+/* ------------------------------------------------------------------ *
+ * b) 页面 ViewModel：只收窄契约里的 Record<string, unknown> / object
+ * ------------------------------------------------------------------ */
 
 export type IntentAnalysis = {
   primary_intent?: string;
   secondary_intents?: string[];
-  risk_level?: "low" | "medium" | "high" | "critical" | string;
+  risk_level?: string;
   routing?: string;
+  requires_safety_prefix?: boolean;
+  /**
+   * 后端 B5（2026-09-24）新增：主意图是本句零命中、从上文继承来的。
+   * 值是继承的来源意图名。**存在就意味着「猜的」**，必须和直接命中区分展示。
+   */
+  inherited_from_context?: string;
   intents?: Array<{
     name: string;
     confidence: number;
     risk_level: string;
+    priority?: number;
     evidence?: string[];
+    /** 该候选是否由上下文继承而来（继承时 confidence 固定 0.6、evidence 为空）。 */
+    inherited_from_context?: boolean;
   }>;
-};
-
-export type ContextUsed = {
-  session_id?: string;
-  recent_message_count?: number;
-  summary_chars?: number;
-  fact_count?: number;
-  redis_enabled?: boolean;
 };
 
 export type SafetyStatus = {
@@ -78,6 +142,15 @@ export type ToolResult = {
   retryable?: boolean;
 };
 
+/**
+ * 契约里 `retrieved_items` / `evidence_citations` 等都是 `object[]`。
+ * 这里收窄到后端实际返回的类（与检索响应同构）。
+ *
+ * 待验证：本机 `/chat/prompt` 恒走降级（`retrieval_count=0`），
+ * 因此**没有实测到非空的 `retrieved_items`**。字段名按 `RetrievalResultItem` 推断。
+ */
+export type RetrievedItem = Contract.RetrievalResultItem;
+
 export type EvidenceCitation = {
   evidence_id?: string;
   knowledge_id?: string;
@@ -89,20 +162,9 @@ export type EvidenceCitation = {
   version?: string | number;
   updated_at?: string;
   score?: number;
-  evidence_role?: "primary" | "supporting" | string;
+  evidence_role?: string;
   quote?: string;
   title?: string;
-};
-
-export type PrdCitation = {
-  knowledge_id?: string;
-  title?: string;
-  category?: string;
-  version?: string | number;
-  snippet?: string;
-  score?: number;
-  updated_at?: string;
-  source?: string;
 };
 
 export type FullTraceStep = {
@@ -114,6 +176,9 @@ export type FullTraceStep = {
   metadata?: Record<string, unknown>;
 };
 
+/**
+ * `token_usage` 实测可能是空对象 `{}` → 前端必须显示「未记录」，不能显示 0。
+ */
 export type TokenUsage = {
   provider?: string;
   model?: string;
@@ -123,15 +188,49 @@ export type TokenUsage = {
   counting_method?: string;
 };
 
+/**
+ * `/chat/prompt` 的 `memory_snapshot`。
+ *
+ * 【2026-09-23 漂移修正】旧版本读的是 `short_term_summary` / `session_summary` /
+ * `current_order_state` / `used_fields` / `long_term_memory` / `user_memory` /
+ * `used_long_term_memory` —— 实测这些字段**一个都不存在**，真实的顶层键只有
+ * `short_term` 和 `long_term`（见后端 `services/chat_service.py:602 build_memory_snapshot`）。
+ * 漂移之所以长期没被发现：契约里该字段是 `Record<string, unknown>`，tsc 拦不住，
+ * 且「记忆」tab 被角色开关隐藏。现在按真实形状收窄。
+ */
 export type MemorySnapshot = {
-  short_term_summary?: string;
-  session_summary?: string;
-  current_order_state?: string;
-  last_primary_evidence?: unknown;
-  long_term_memory?: Record<string, unknown>;
-  user_memory?: Record<string, unknown>;
-  used_long_term_memory?: boolean;
-  used_fields?: string[];
+  short_term?: {
+    session_id?: string;
+    summary?: string;
+    facts?: Record<string, unknown>;
+    recent_messages?: MemoryRecentMessage[];
+  };
+  long_term?: {
+    /** 是否命中长期记忆（后端按 `bool(user_memory)` 给）。 */
+    used?: boolean;
+    /** 读到的用户画像字段。 */
+    fields?: Record<string, unknown>;
+    /** 本次请求新写入的字段。 */
+    updated_fields?: Record<string, unknown>;
+    priority_note?: string;
+  };
+};
+
+/** `short_term.recent_messages[]` 的元素。 */
+export type MemoryRecentMessage = {
+  role?: string;
+  content?: string;
+  risk_level?: string;
+  created_at?: string;
+  intent?: IntentAnalysis;
+};
+
+export type ContextUsed = {
+  session_id?: string;
+  recent_message_count?: number;
+  summary_chars?: number;
+  fact_count?: number;
+  redis_enabled?: boolean;
 };
 
 export type HandoffTicket = {
@@ -140,24 +239,6 @@ export type HandoffTicket = {
   reason?: string;
   context?: unknown;
   context_summary?: string;
-};
-
-export type ChatTrace = {
-  retrieval_count?: number;
-  request_id?: string;
-  latency_ms?: number;
-  top1_intent?: string;
-  answer_source?: string;
-  reply_rules_applied?: boolean;
-  degraded?: boolean;
-  failure_stage?: string;
-  used_fallback_prompt?: boolean;
-  fallback_reason?: string;
-  user_id?: string;
-  session_id?: string;
-  order_id?: string | null;
-  intent_analysis?: IntentAnalysis;
-  safety_status?: SafetyStatus;
 };
 
 export type ManualJudgment = {
@@ -175,303 +256,52 @@ export type EvaluationMetrics = {
   suggested_layer_counts?: Record<string, number>;
 };
 
-export type ChatResponse = {
-  request_id?: string;
-  reply: string;
-  risk_level?: "low" | "medium" | "high" | "blocked" | string;
-  confidence_level?: "high" | "medium" | "low" | string;
-  need_human_review?: boolean;
-  human_review_reason?: string;
-  citations?: PrdCitation[];
-  conversation_status?: string;
-  answer_basis?: string | Record<string, unknown>;
-  evidence_citations?: EvidenceCitation[];
-  tool_results?: ToolResult[];
-  memory_snapshot?: MemorySnapshot;
+/**
+ * `/chat/prompt` 响应 ViewModel。
+ * 基础字段全部来自生成契约 `Contract.ChatResponse`；
+ * 只把契约中标为 `object` / `object[]` 的字段收窄成可访问的具体类型。
+ */
+export type ChatResponse = Omit<
+  Contract.ChatResponse,
+  | "citations"
+  | "context_used"
+  | "decision_trace"
+  | "evaluation_metrics"
+  | "evidence_citations"
+  | "full_trace"
+  | "handoff_ticket"
+  | "intent_analysis"
+  | "manual_judgment"
+  | "memory_snapshot"
+  | "prompt_context_items"
+  | "retrieved_items"
+  | "safety_status"
+  | "token_usage"
+  | "tool_results"
+> & {
+  citations?: EvidenceCitation[];
+  context_used?: ContextUsed;
   decision_trace?: unknown;
+  evaluation_metrics?: EvaluationMetrics;
+  evidence_citations?: EvidenceCitation[];
   full_trace?: FullTraceStep[];
   handoff_ticket?: HandoffTicket | null;
-  token_usage?: TokenUsage;
-  session_id?: string;
-  user_id?: string;
-  order_id?: string | null;
   intent_analysis?: IntentAnalysis;
-  context_used?: ContextUsed;
-  safety_status?: SafetyStatus;
-  confidence_score?: number;
-  final_prompt?: string;
-  prompt_version?: string;
-  retrieved_documents?: string[];
-  retrieved_items?: RetrievalResult[];
-  prompt_context_items?: PromptContextItem[];
-  trace?: ChatTrace;
-  expected_intent?: string;
-  expected_evidence_keywords?: string[];
-  matched_evidence_keywords?: string[];
-  missing_evidence_keywords?: string[];
-  forbidden_keywords?: string[];
-  forbidden_keyword_hits?: string[];
-  issue_type?: string;
-  suggested_layer?: string;
   manual_judgment?: ManualJudgment;
-  evaluation_metrics?: EvaluationMetrics;
-  suggested_layer_counts?: Record<string, number>;
-  used_primary_evidence?: boolean;
-  mixed_supporting_intent?: boolean;
-  risky_promises?: string[];
-  needs_manual_review?: boolean;
+  memory_snapshot?: MemorySnapshot;
+  prompt_context_items?: PromptContextItem[];
+  retrieved_items?: RetrievedItem[];
+  safety_status?: SafetyStatus;
+  token_usage?: TokenUsage;
+  tool_results?: ToolResult[];
+
+  /** 前端本地字段，**不是后端返回**：审核动作的本地回执。 */
   review_action?: ChatReviewActionResponse;
-  handoff_recommendation?: {
-    recommended?: boolean;
-    reason?: string;
-    priority?: string;
-  };
 };
 
-export type ChatReviewAction = "accepted" | "edited_and_sent" | "human_handoff" | "marked_bad_case";
-
-export type ChatReviewActionRequest = {
-  request_id: string;
-  action: ChatReviewAction;
-  operator_id?: string;
-  operator_role?: string;
-  final_reply?: string;
-  reason?: string;
-};
-
-export type ChatReviewActionResponse = {
-  request_id: string;
-  session_id: string;
-  user_id: string;
-  order_id?: string | null;
-  action: ChatReviewAction;
-  status: string;
-  final_reply: string;
-  reason?: string;
-  handoff_ticket?: HandoffTicket | null;
-  audit_id?: number | null;
-  saved: boolean;
-  created_at: string;
-};
-
-export type ChatHistoryResponse = {
-  user_id: string;
-  session_id: string;
-  order_id?: string | null;
-  messages: Array<{
-    role: "user" | "assistant";
-    content: string;
-    intent?: Record<string, unknown>;
-    risk_level?: string;
-    created_at?: string;
-  }>;
-  latest_response?: ChatResponse;
-};
-
-export type OrderStatePayload = {
-  user_id: string;
-  order_id: string;
-  status: string;
-  status_label?: string;
-  delivery_status?: string;
-  summary?: string;
-  refund_status?: string;
-  store_name?: string;
-  items?: Array<Record<string, unknown>>;
-  total?: number;
-};
-
-export type FeedbackRequest = {
-  request_id: string;
-  query: string;
-  reply: string;
-  helpful: boolean;
-  reason?: string;
-  expected_reply?: string;
-  trace?: ChatTrace;
-};
-
-export type FeedbackItem = {
-  id: number;
-  request_id: string;
-  query: string;
-  reply: string;
-  helpful: boolean;
-  reason: string;
-  expected_reply: string;
-  top1_intent: string;
-  latency_ms: number;
-  answer_source: string;
-  failure_stage: string;
-  exported: boolean;
-  created_at: string;
-};
-
-export type RecentFeedbackResponse = {
-  count: number;
-  items: FeedbackItem[];
-};
-
-export type ExportEvalCaseResponse = {
-  feedback_id: number;
-  eval_case: Record<string, unknown>;
-};
-
-export type OpsMetrics = {
-  source?: string;
-  request_count: number;
-  failure_count: number;
-  average_latency_ms: number;
-  p95_latency_ms: number;
-  empty_retrieval_count: number;
-  reply_rules_hit_count: number;
-  fallback_count: number;
-  accepted_count: number;
-  edited_sent_count: number;
-  human_handoff_count: number;
-  bad_case_count: number;
-  reviewed_count: number;
-  accepted_rate: number;
-  edited_sent_rate: number;
-  human_handoff_rate: number;
-  bad_case_rate: number;
-  token_recorded_count: number;
-  token_record_rate: number;
-  total_prompt_tokens: number;
-  total_completion_tokens: number;
-  total_tokens: number;
-  average_tokens_per_request: number;
-};
-
-export type KnowledgeStatus = "draft" | "pending_review" | "approved" | "rejected" | "archived" | "published" | "rollback";
-
-export type KnowledgeOpsItem = {
-  id: number;
-  base_id: string;
-  version: number;
-  title: string;
-  question: string;
-  answer: string;
-  category: string;
-  intent: string;
-  status: KnowledgeStatus;
-  owner: string;
-  source: string;
-  effective_at: string;
-  expired_at: string;
-  review_note: string;
-  created_at: string;
-  updated_at: string;
-  reviewed_at: string;
-};
-
-export type KnowledgePayload = {
-  title?: string;
-  question: string;
-  answer: string;
-  category: string;
-  intent: string;
-  owner?: string;
-  source?: string;
-  effective_at?: string;
-  expired_at?: string;
-};
-
-export type KnowledgeListResponse = {
-  total: number;
-  limit: number;
-  offset: number;
-  items: KnowledgeOpsItem[];
-};
-
-export type KnowledgeExportResponse = {
-  count: number;
-  jsonl: string;
-};
-
-export type KnowledgePublishHistoryItem = {
-  id: number;
-  publish_id: string;
-  action: "publish" | "rollback" | string;
-  status: string;
-  merged_count: number;
-  item_ids: number[];
-  backup_path: string;
-  knowledge_path: string;
-  faiss_index_path: string;
-  note: string;
-  created_at: string;
-};
-
-export type KnowledgePublishResponse = KnowledgePublishHistoryItem;
-
-export type KnowledgePublishHistoryResponse = {
-  count: number;
-  items: KnowledgePublishHistoryItem[];
-};
-
-export type PromptVersionItem = {
-  id: number;
-  version: string;
-  status: "draft" | "evaluation" | "approved" | "canary" | "production" | "rollback" | string;
-  system_prompt: string;
-  developer_prompt: string;
-  change_reason: string;
-  author: string;
-  evaluation_result: string;
-  effective_at: string;
-  created_at: string;
-  activated_at: string;
-  rolled_back_from: string;
-};
-
-export type PromptVersionPayload = {
-  version?: string;
-  system_prompt: string;
-  developer_prompt?: string;
-  change_reason?: string;
-  evaluation_result?: string;
-  effective_at?: string;
-};
-
-export type PromptVersionListResponse = {
-  count: number;
-  items: PromptVersionItem[];
-};
-
-export type AuditLogItem = {
-  id: number;
-  operator_id: string;
-  operator_role: string;
-  action_type: string;
-  object_type: string;
-  object_id: string;
-  request_id: string;
-  before_summary: string;
-  after_summary: string;
-  ip: string;
-  device_info: string;
-  created_at: string;
-};
-
-export type AuditLogListResponse = {
-  count: number;
-  items: AuditLogItem[];
-};
-
-export type ReleaseChecklistItem = {
-  name: string;
-  status: "pass" | "warn" | "fail" | string;
-  evidence: string;
-  next_step: string;
-};
-
-export type ReleaseChecklistResponse = {
-  ready: boolean;
-  failed_count: number;
-  warning_count: number;
-  items: ReleaseChecklistItem[];
-};
+/* ------------------------------------------------------------------ *
+ * c) 纯前端 ViewModel（与后端契约无关）
+ * ------------------------------------------------------------------ */
 
 export type ChatMessage = {
   id: string;
@@ -481,51 +311,12 @@ export type ChatMessage = {
   retrievedDocuments?: string[];
 };
 
-export type RetrievalSearchRequest = {
-  query: string;
-  mode: RetrievalMode;
-  limit: number;
-  min_score: number;
-};
-
-export type RetrievalSearchResponse = {
-  query: string;
-  mode: RetrievalMode;
-  count: number;
-  results: RetrievalResult[];
-};
-
-export type RetrievalPromptPreviewResponse = RetrievalSearchResponse & {
-  prompt?: string;
-  final_prompt?: string;
-  prompt_context_items?: PromptContextItem[];
-};
-
-export type ModelInfo = {
-  base_model: string;
-  adapter_enabled: boolean;
-  adapter_name: string | null;
-};
-
-export type CategoriesResponse = {
-  categories: string[];
-  count: number;
-};
-
-export type KnowledgeExample = {
-  category?: string;
-  question: string;
-  answer: string;
-};
-
-export type ExamplesByCategoryResponse = {
-  category: string;
-  count: number;
-  examples: KnowledgeExample[];
-};
-
-export type ExampleSearchResponse = {
-  keyword: string;
-  count: number;
-  results: KnowledgeExample[];
-};
+export type KnowledgeStatus =
+  | "draft"
+  | "pending_review"
+  | "approved"
+  | "rejected"
+  | "archived"
+  | "published"
+  | "rollback"
+  | string;

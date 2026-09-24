@@ -119,7 +119,8 @@ export function KnowledgeOpsView({
       title: example.question,
       question: example.question,
       answer: example.answer,
-      category: example.category ?? selectedCategory,
+      // 契约里的 ExampleItem 只有 question / answer；分类来自外层 ExamplesByCategoryResponse.category
+      category: selectedCategory,
       intent: "",
       owner: "knowledge_ops",
       source: "curated_seed",

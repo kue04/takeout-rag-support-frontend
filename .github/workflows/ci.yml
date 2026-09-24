@@ -1,0 +1,53 @@
+name: CI
+
+# 前端仓库此前没有 CI（后端有，前端只有本地构建）。
+# 这个流水线只做一件事，但做死它：**确认构建产物里没有本机地址和内联凭据**。
+#
+# 背景见踩坑 C8（后端仓库 docs/RAG_DEV_PITFALLS.md）：
+# Vite 会把所有 VITE_* 变量在构建期内联成字符串字面量写进 dist/*.js，
+# 而 dist 是公开可下载的静态文件。所以「把凭据放进 .env」这条经验
+# 在前端是反的 —— 暴露面从「代码仓库」变成了「每一个访客」。
+#
+# 这个判据以前只写在文档里，靠人记得查。现在它是机器执行的关卡。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-artifact-guard:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm run build` = tsc -b && vite build —— 类型检查也在这一步
+      - name: Type check and build
+        run: npm run build
+
+      # 先验探针，再验产物。
+      # 顺序刻意如此：一个「没报警」的守卫有两种可能 —— 产物干净，或者探针瞎了。
+      # 分不清这两件事的门禁等于没有门禁，所以先用样本证明探针抓得到。
+      - name: Guard self-test (verify the probe itself)
+        run: npm run guard:self-test
+
+      - name: Guard build artifacts (scan dist)
+        run: npm run guard:artifacts

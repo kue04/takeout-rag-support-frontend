@@ -1,106 +1,90 @@
 import { apiRequest } from "./client";
 import type {
   KnowledgeExportResponse,
+  KnowledgeItem,
   KnowledgeListResponse,
-  KnowledgeOpsItem,
   KnowledgePayload,
   KnowledgePublishHistoryResponse,
   KnowledgePublishResponse,
+  KnowledgeReviewRequest,
 } from "../types/api";
 
-const knowledgeWriteHeaders = {
-  "X-Operator-Id": "knowledge_ops_demo",
-  "X-User-Role": "knowledge_ops",
-};
-
-const knowledgeReadHeaders = {
-  "X-Operator-Id": "knowledge_ops_demo",
-  "X-User-Role": "knowledge_ops",
-};
-
-const knowledgeRollbackHeaders = {
-  "X-Operator-Id": "admin_demo",
-  "X-User-Role": "admin",
-};
-
-export async function listKnowledgeItems(params: {
-  status?: string;
-  category?: string;
-  intent?: string;
-  keyword?: string;
-  limit?: number;
-  offset?: number;
-} = {}) {
-  const query = new URLSearchParams({
-    limit: String(params.limit ?? 20),
-    offset: String(params.offset ?? 0),
-  });
-  for (const key of ["status", "category", "intent", "keyword"] as const) {
-    if (params[key]) {
-      query.set(key, params[key] ?? "");
-    }
-  }
-  return apiRequest<KnowledgeListResponse>(`/knowledge/items?${query}`, {
-    headers: knowledgeReadHeaders,
+/**
+ * 知识库**运营**这条线（`knowledge_ops.db` 里的知识条目）。
+ *
+ * 注意区分 B7 拆开的三条「发布」：
+ * - 本文件里的 `publish-approved` / `rollback-latest` 是**知识条目发布**（A 轨，种子 FAQ）；
+ * - **文档版本发布没有接口**，由接入流水线在 `published` 阶段自动完成；
+ * - **chunk 索引重建**是 `POST /ingestion/indexes/rebuild`（见 api/retrieval.ts）。
+ */
+export async function listKnowledgeItems(
+  params: {
+    status?: string;
+    category?: string;
+    intent?: string;
+    keyword?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<KnowledgeListResponse> {
+  return apiRequest<KnowledgeListResponse>("/knowledge/items", {
+    query: {
+      limit: params.limit ?? 20,
+      offset: params.offset ?? 0,
+      status: params.status,
+      category: params.category,
+      intent: params.intent,
+      keyword: params.keyword,
+    },
   });
 }
 
-export async function createKnowledgeItem(body: KnowledgePayload) {
-  return apiRequest<KnowledgeOpsItem, KnowledgePayload>("/knowledge/items", {
+export async function createKnowledgeItem(body: KnowledgePayload): Promise<KnowledgeItem> {
+  return apiRequest<KnowledgeItem, KnowledgePayload>("/knowledge/items", {
     method: "POST",
     body,
-    headers: knowledgeWriteHeaders,
   });
 }
 
-export async function updateKnowledgeItem(id: number, body: KnowledgePayload) {
-  return apiRequest<KnowledgeOpsItem, KnowledgePayload>(`/knowledge/items/${id}`, {
+export async function updateKnowledgeItem(id: number, body: KnowledgePayload): Promise<KnowledgeItem> {
+  return apiRequest<KnowledgeItem, KnowledgePayload>(`/knowledge/items/${id}`, {
     method: "PUT",
     body,
-    headers: knowledgeWriteHeaders,
   });
 }
 
-export async function archiveKnowledgeItem(id: number) {
-  return apiRequest<KnowledgeOpsItem>(`/knowledge/items/${id}/archive`, {
+export async function archiveKnowledgeItem(id: number): Promise<KnowledgeItem> {
+  return apiRequest<KnowledgeItem>(`/knowledge/items/${id}/archive`, { method: "POST" });
+}
+
+export async function reviewKnowledgeItem(
+  id: number,
+  status: string,
+  review_note = "",
+): Promise<KnowledgeItem> {
+  return apiRequest<KnowledgeItem, KnowledgeReviewRequest>(`/knowledge/items/${id}/review`, {
     method: "POST",
-    headers: knowledgeWriteHeaders,
+    body: { status, review_note },
   });
 }
 
-export async function reviewKnowledgeItem(id: number, status: "pending_review" | "approved" | "rejected", review_note = "") {
-  return apiRequest<KnowledgeOpsItem, { status: "pending_review" | "approved" | "rejected"; review_note: string }>(
-    `/knowledge/items/${id}/review`,
-    {
-      method: "POST",
-      body: { status, review_note },
-      headers: knowledgeWriteHeaders,
-    },
-  );
+export async function exportApprovedKnowledge(): Promise<KnowledgeExportResponse> {
+  return apiRequest<KnowledgeExportResponse>("/knowledge/export-approved");
 }
 
-export async function exportApprovedKnowledge() {
-  return apiRequest<KnowledgeExportResponse>("/knowledge/export-approved", {
-    headers: knowledgeReadHeaders,
+export async function publishApprovedKnowledge(): Promise<KnowledgePublishResponse> {
+  return apiRequest<KnowledgePublishResponse>("/knowledge/publish-approved", { method: "POST" });
+}
+
+export async function getKnowledgePublishHistory(
+  limit = 20,
+): Promise<KnowledgePublishHistoryResponse> {
+  return apiRequest<KnowledgePublishHistoryResponse>("/knowledge/publish-history", {
+    query: { limit },
   });
 }
 
-export async function publishApprovedKnowledge() {
-  return apiRequest<KnowledgePublishResponse>("/knowledge/publish-approved", {
-    method: "POST",
-    headers: knowledgeWriteHeaders,
-  });
-}
-
-export async function getKnowledgePublishHistory(limit = 20) {
-  return apiRequest<KnowledgePublishHistoryResponse>(`/knowledge/publish-history?limit=${limit}`, {
-    headers: knowledgeReadHeaders,
-  });
-}
-
-export async function rollbackLatestKnowledgePublish() {
-  return apiRequest<KnowledgePublishResponse>("/knowledge/rollback-latest", {
-    method: "POST",
-    headers: knowledgeRollbackHeaders,
-  });
+/** 需要 `write:knowledge_rollback`（supervisor / admin）。 */
+export async function rollbackLatestKnowledgePublish(): Promise<KnowledgePublishResponse> {
+  return apiRequest<KnowledgePublishResponse>("/knowledge/rollback-latest", { method: "POST" });
 }

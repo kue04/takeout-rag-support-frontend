@@ -1,13 +1,7 @@
 import { apiRequest } from "./client";
 import type { ModelInfo } from "../types/api";
 
-const modelReadHeaders = {
-  "X-Operator-Id": "supervisor_demo",
-  "X-User-Role": "supervisor",
-};
-
+/** 需要 `read:model_info_read`（仅 supervisor / qa / admin）。 */
 export async function getModelInfo(): Promise<ModelInfo> {
-  return apiRequest<ModelInfo>("/model/info", {
-    headers: modelReadHeaders,
-  });
+  return apiRequest<ModelInfo>("/model/info");
 }

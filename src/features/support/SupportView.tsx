@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import {
@@ -12,15 +12,19 @@ import {
   Edit3,
   FileJson,
   Flag,
+  GripVertical,
   History,
   MessageCircle,
   ShieldAlert,
   Wrench,
   X,
 } from "lucide-react";
+import { resolveStepDetail } from "./diagnosticDetails";
 import { EmptyState } from "../../components/EmptyState";
+import { Notice } from "../../components/Notice";
 import { Score } from "../../components/Score";
 import { supportQuestions, type OrderStatus, type TakeoutOrder } from "../../data/marketplace";
+import { describeRiskLevel, describeRouting, formatTokenCount, type ErrorPresentation } from "../../lib/status";
 import type {
   ChatMessage,
   ChatReviewAction,
@@ -28,8 +32,7 @@ import type {
   FeedbackItem,
   IntentAnalysis,
   OpsMetrics,
-  RetrievalPromptPreviewResponse,
-  RetrievalResult,
+  RetrievedItem,
   SafetyStatus,
   TokenUsage,
 } from "../../types/api";
@@ -50,13 +53,41 @@ const supportScenarios: SupportScenario[] = [
   { id: "DEMO-DONE", label: "已送达", status: "delivered", deliveryStatus: "订单已送达，用户反馈未收到" },
 ];
 
+/* ------------------------------------------------------------------ *
+ * 诊断面板宽度（2026-09-23）
+ *
+ * 原实现把右栏钉死 420px，而诊断面板是全页信息密度最高的区域：
+ * 步骤标题带英文名一律被截成「读取上下文 · memory_lo...」，摘要同样看不全。
+ * 现改为可拖拽（380–900px）、可双击复位，并把选择记到 localStorage。
+ * ------------------------------------------------------------------ */
+
+const DIAG_WIDTH_KEY = "takeout-rag-diag-width";
+const DIAG_WIDTH_MIN = 380;
+const DIAG_WIDTH_MAX = 900;
+const DIAG_WIDTH_DEFAULT = 520;
+
+function loadDiagWidth(): number {
+  const raw = Number(window.localStorage.getItem(DIAG_WIDTH_KEY));
+  if (Number.isFinite(raw) && raw >= DIAG_WIDTH_MIN && raw <= DIAG_WIDTH_MAX) {
+    return raw;
+  }
+  return DIAG_WIDTH_DEFAULT;
+}
+
+function saveDiagWidth(width: number) {
+  try {
+    window.localStorage.setItem(DIAG_WIDTH_KEY, String(Math.round(width)));
+  } catch {
+    // 隐私模式下 localStorage 可能不可用；记不住不影响使用。
+  }
+}
+
 export function SupportView({
   order,
   userId,
   sessionId,
   messages,
   retrievalResults,
-  promptPreview,
   diagnostics,
   apiError,
   ragError,
@@ -81,11 +112,11 @@ export function SupportView({
   userId: string;
   sessionId: string | null;
   messages: ChatMessage[];
-  retrievalResults: RetrievalResult[];
-  promptPreview: RetrievalPromptPreviewResponse | null;
+  /** 只来自当次 `/chat/prompt` 的 `retrieved_items` —— 不是另一次检索请求的结果。 */
+  retrievalResults: RetrievedItem[];
   diagnostics: ChatResponse | null;
-  apiError: string;
-  ragError: string;
+  apiError: ErrorPresentation | null;
+  ragError: ErrorPresentation | null;
   isLoading: boolean;
   isRagOpen: boolean;
   onBack: () => void;
@@ -107,6 +138,50 @@ export function SupportView({
   const [feedbackReason, setFeedbackReason] = useState("");
   const [expectedReply, setExpectedReply] = useState("");
   const mobileRagRef = useRef<HTMLDivElement | null>(null);
+
+  const [diagWidth, setDiagWidth] = useState(loadDiagWidth);
+  const diagWidthRef = useRef(diagWidth);
+  diagWidthRef.current = diagWidth;
+  const diagDragRef = useRef<{ x: number; width: number } | null>(null);
+
+  useEffect(() => {
+    // 换会话/刷新后按最后一帧的宽度落盘，避免拖拽过程中每像素写一次。
+    return () => saveDiagWidth(diagWidthRef.current);
+  }, []);
+
+  function handleDiagDragStart(event: React.PointerEvent<HTMLDivElement>) {
+    diagDragRef.current = { x: event.clientX, width: diagWidthRef.current };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleDiagDragMove(event: React.PointerEvent<HTMLDivElement>) {
+    const origin = diagDragRef.current;
+    if (!origin) {
+      return;
+    }
+    // 面板在右侧，往左拖 = 变宽，所以用减法。
+    const next = Math.min(
+      DIAG_WIDTH_MAX,
+      Math.max(DIAG_WIDTH_MIN, origin.width - (event.clientX - origin.x)),
+    );
+    setDiagWidth(next);
+  }
+
+  function handleDiagDragEnd(event: React.PointerEvent<HTMLDivElement>) {
+    if (!diagDragRef.current) {
+      return;
+    }
+    diagDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    saveDiagWidth(diagWidthRef.current);
+  }
+
+  function handleDiagWidthReset() {
+    setDiagWidth(DIAG_WIDTH_DEFAULT);
+    saveDiagWidth(DIAG_WIDTH_DEFAULT);
+  }
 
   useGSAP(
     () => {
@@ -142,7 +217,10 @@ export function SupportView({
   }
 
   return (
-    <section className="view-surface grid min-h-[calc(100vh-128px)] gap-4 lg:grid-cols-[280px_minmax(420px,1fr)_420px]">
+    <section
+      className="view-surface grid min-h-[calc(100vh-128px)] gap-4 lg:grid-cols-[280px_minmax(420px,1fr)_var(--diag-width,520px)]"
+      style={{ "--diag-width": `${diagWidth}px` } as React.CSSProperties}
+    >
       <aside className="rounded-[16px] bg-white p-4">
         <button className="mb-4 inline-flex items-center gap-2 text-sm font-bold text-muted" type="button" onClick={onBack}>
           <ArrowLeft size={17} />
@@ -228,11 +306,26 @@ export function SupportView({
           {messages.map((message) => (
             <ChatBubble key={message.id} message={message} />
           ))}
-          {isLoading ? <p className="text-sm font-bold text-muted">客服生成中...</p> : null}
+          {isLoading ? (
+            <p className="text-sm font-bold text-muted" role="status">
+              客服生成中…（非流式：后端缓冲完整答案后一次性返回，没有打字机/停止生成）
+            </p>
+          ) : null}
           {apiError ? (
-            <div className="rounded-work border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">
-              {apiError}
-            </div>
+            <Notice tone={apiError.tone} title={apiError.title} detail={apiError.detail} action={apiError.action}>
+              <p className="text-[11px] opacity-80">
+                {apiError.path ? `路径：${apiError.path}` : null}
+                {apiError.status ? ` · HTTP ${apiError.status}` : null}
+              </p>
+            </Notice>
+          ) : null}
+          {diagnostics?.trace?.degraded ? (
+            <Notice
+              tone="warning"
+              title="本次回答走了降级链路，不能当作完整链路的结果"
+              detail={`failure_stage：${diagnostics.trace.failure_stage || "未返回"} · fallback_reason：${diagnostics.trace.fallback_reason || "未返回"}`}
+              action="降级是后端有意设计（缺本地生成依赖时会走兜底回复）。此时检索证据通常为空 —— 这是原因，不是「没有资料」。"
+            />
           ) : null}
           {diagnostics ? <AnswerBasisCard diagnostics={diagnostics} /> : null}
           {diagnostics ? (
@@ -326,7 +419,6 @@ export function SupportView({
           userId={userId}
           sessionId={sessionId}
           results={retrievalResults}
-          promptPreview={promptPreview}
           diagnostics={diagnostics}
           ragError={ragError}
           onCopyReport={onCopyReport}
@@ -334,6 +426,10 @@ export function SupportView({
           opsMetrics={opsMetrics}
           onCopyEvalCase={onCopyEvalCase}
           canViewInternalDiagnostics={canViewInternalDiagnostics}
+          onDragStart={handleDiagDragStart}
+          onDragMove={handleDiagDragMove}
+          onDragEnd={handleDiagDragEnd}
+          onWidthReset={handleDiagWidthReset}
         />
       </div>
 
@@ -355,14 +451,17 @@ export function SupportView({
               userId={userId}
               sessionId={sessionId}
               results={retrievalResults}
-              promptPreview={promptPreview}
-              diagnostics={diagnostics}
+                  diagnostics={diagnostics}
               ragError={ragError}
               onCopyReport={onCopyReport}
               recentFeedback={recentFeedback}
               opsMetrics={opsMetrics}
               onCopyEvalCase={onCopyEvalCase}
               canViewInternalDiagnostics={canViewInternalDiagnostics}
+              onDragStart={() => undefined}
+              onDragMove={() => undefined}
+              onDragEnd={() => undefined}
+              onWidthReset={() => undefined}
             />
           </div>
         </div>
@@ -398,7 +497,6 @@ function RagPanel({
   userId,
   sessionId,
   results,
-  promptPreview,
   diagnostics,
   ragError,
   onCopyReport,
@@ -406,19 +504,26 @@ function RagPanel({
   opsMetrics,
   onCopyEvalCase,
   canViewInternalDiagnostics,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+  onWidthReset,
 }: {
   orderId: string;
   userId: string;
   sessionId: string | null;
-  results: RetrievalResult[];
-  promptPreview: RetrievalPromptPreviewResponse | null;
+  results: RetrievedItem[];
   diagnostics: ChatResponse | null;
-  ragError: string;
+  ragError: ErrorPresentation | null;
   onCopyReport: () => void;
   recentFeedback: FeedbackItem[];
   opsMetrics: OpsMetrics | null;
   onCopyEvalCase: (feedbackId: number) => Promise<void>;
   canViewInternalDiagnostics: boolean;
+  onDragStart: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onDragMove: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onDragEnd: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onWidthReset: () => void;
 }) {
   const contextUsed = diagnostics?.context_used;
   const intentAnalysis = diagnostics?.intent_analysis;
@@ -449,7 +554,22 @@ function RagPanel({
   );
 
   return (
-    <aside ref={panelRef} className="rounded-[16px] bg-white p-4">
+    <aside ref={panelRef} className="relative rounded-[16px] bg-white p-4">
+      {/* 宽度把手：面板在右侧，往左拖 = 变宽；双击复位。窄屏是单列堆叠，故仅 lg 以上可拖。 */}
+      <div
+        className="absolute -left-4 top-4 hidden h-[calc(100%-2rem)] w-4 cursor-col-resize touch-none items-center justify-center rounded-full text-muted hover:bg-subtle hover:text-ink lg:flex"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="拖拽调整诊断面板宽度，双击复位为默认宽度"
+        title="拖拽调整宽度，双击复位"
+        onPointerDown={onDragStart}
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+        onPointerCancel={onDragEnd}
+        onDoubleClick={onWidthReset}
+      >
+        <GripVertical size={14} />
+      </div>
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <p className="text-base font-black">诊断面板</p>
@@ -465,20 +585,38 @@ function RagPanel({
         </button>
       </div>
       {ragError ? (
-        <div className="mb-3 rounded-work border border-red-200 bg-red-50 p-3 text-xs font-bold leading-5 text-red-700">
-          {ragError}
-        </div>
+        <Notice
+          tone={ragError.tone}
+          title={ragError.title}
+          detail={ragError.detail}
+          action={ragError.action}
+          className="mb-3"
+        />
       ) : null}
       <div className="mb-3 grid grid-cols-2 gap-2 text-xs">
         <MetricMini label="user" value={shortId(resolvedUserId)} title={resolvedUserId} />
-        <MetricMini label="session" value={resolvedSessionId ? shortId(resolvedSessionId) : "-"} title={resolvedSessionId ?? ""} />
-        <MetricMini label="order" value={resolvedOrderId ?? "-"} />
+        <MetricMini
+          label="session"
+          value={resolvedSessionId ? shortId(resolvedSessionId) : "尚未建立"}
+          title={resolvedSessionId ?? ""}
+        />
+        <MetricMini label="order" value={resolvedOrderId ?? "无"} />
         <MetricMini label="risk" value={getRiskLevel(diagnostics)} />
-        {canViewInternalDiagnostics ? <MetricMini label="prompt" value={diagnostics?.prompt_version ?? "-"} /> : null}
+        {canViewInternalDiagnostics ? (
+          <MetricMini label="prompt" value={diagnostics?.prompt_version || "未返回"} />
+        ) : null}
         <MetricMini
           label="tokens"
-          value={formatTokenCount(diagnostics?.token_usage?.total_tokens)}
-          title={canViewInternalDiagnostics ? formatTokenUsageTitle(diagnostics?.token_usage) : undefined}
+          value={
+            typeof diagnostics?.token_usage?.total_tokens === "number"
+              ? formatTokenCount(diagnostics.token_usage.total_tokens)
+              : "未记录"
+          }
+          title={
+            canViewInternalDiagnostics
+              ? "token_usage = {} 表示后端未记录；缺数据和真实 0 是两件事"
+              : undefined
+          }
         />
       </div>
       <div className={`mb-3 grid gap-1 rounded-work bg-subtle p-1 ${canViewInternalDiagnostics ? "grid-cols-5" : "grid-cols-3"}`}>
@@ -501,14 +639,13 @@ function RagPanel({
         <EvidenceTab
           diagnostics={diagnostics}
           results={results}
-          promptPreview={promptPreview}
           canViewInternalDiagnostics={canViewInternalDiagnostics}
         />
       ) : null}
       {visibleActiveTab === "memory" && canViewInternalDiagnostics ? (
         <MemoryTab diagnostics={diagnostics} contextUsed={contextUsed} opsMetrics={opsMetrics} recentFeedback={recentFeedback} onCopyEvalCase={onCopyEvalCase} />
       ) : null}
-      {visibleActiveTab === "json" && canViewInternalDiagnostics ? <RawJsonTab diagnostics={diagnostics} promptPreview={promptPreview} /> : null}
+      {visibleActiveTab === "json" && canViewInternalDiagnostics ? <RawJsonTab diagnostics={diagnostics} /> : null}
     </aside>
   );
 }
@@ -573,6 +710,7 @@ function TimelineTab({
                   key={key}
                   step={step}
                   index={index}
+                  diagnostics={diagnostics}
                   expanded={Boolean(expandedSteps[key])}
                   canViewInternalDiagnostics={canViewInternalDiagnostics}
                   onToggle={() => toggleStep(key)}
@@ -606,12 +744,14 @@ function TimelineTab({
 function TimelineStepCard({
   step,
   index,
+  diagnostics,
   expanded,
   canViewInternalDiagnostics,
   onToggle,
 }: {
   step: NonNullable<ChatResponse["full_trace"]>[number];
   index: number;
+  diagnostics: ChatResponse | null;
   expanded: boolean;
   canViewInternalDiagnostics: boolean;
   onToggle: () => void;
@@ -623,6 +763,13 @@ function TimelineStepCard({
   const hasTokenUsage = step.step === "generation_completed" && Boolean(getStepTokenUsage(step.metadata));
   const metadataSummary = buildTimelineMetadataSummary(step.metadata, canViewInternalDiagnostics);
   const hasDetails = Boolean(inputSummary || outputSummary || hasTokenUsage || metadataSummary);
+  /**
+   * 富详情：`memory_loaded` / `intent_detected` / `risk_precheck` / `order_tool_called`
+   * 这四步的 output_summary 只有计数或枚举，真正的内容在顶层字段里，见 diagnosticDetails.ts。
+   */
+  const richDetail = resolveStepDetail(step, diagnostics);
+  // 折叠时也要有意义：优先显示富详情的第一行结论，而不是 `rag` 这种裸枚举。
+  const collapsedSummary = richDetail?.lines[0]?.value.split("\n")[0] || outputSummary;
 
   return (
     <article className="rounded-work border border-line bg-white text-xs leading-5">
@@ -637,10 +784,12 @@ function TimelineStepCard({
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-work bg-subtle font-black text-muted">
               {index + 1}
             </span>
-            <span className="truncate font-black text-ink">{formatTraceStepName(step.step, index)}</span>
+            <span className="break-words font-black text-ink">{formatTraceStepName(step.step, index)}</span>
           </div>
-          {!expanded && outputSummary ? (
-            <p className="mt-1 line-clamp-1 pl-8 text-muted">{outputSummary}</p>
+          {!expanded && collapsedSummary ? (
+            <p className="mt-1 line-clamp-1 pl-8 text-muted" title={collapsedSummary}>
+              {collapsedSummary}
+            </p>
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -658,7 +807,39 @@ function TimelineStepCard({
       </button>
       {expanded ? (
         <div className="border-t border-line px-3 pb-3 pt-2">
-          {hasDetails ? (
+          {richDetail ? (
+            <div className="space-y-2">
+              {richDetail.what ? (
+                <p className="rounded-work bg-subtle p-2 leading-5 text-muted">{richDetail.what}</p>
+              ) : null}
+              {richDetail.lines.map((line, lineIndex) => (
+                <TimelineDetailLine
+                  key={`${line.label}-${lineIndex}`}
+                  label={line.label}
+                  value={line.value}
+                  muted={line.missing}
+                />
+              ))}
+              {(inputSummary || outputSummary) && canViewInternalDiagnostics ? (
+                <details className="rounded-work bg-subtle p-2">
+                  <summary className="cursor-pointer font-black text-muted">后端原始摘要</summary>
+                  <div className="mt-2 space-y-2">
+                    {inputSummary ? <TimelineDetailLine label="输入摘要" value={inputSummary} /> : null}
+                    {outputSummary ? <TimelineDetailLine label="处理结果" value={outputSummary} /> : null}
+                  </div>
+                </details>
+              ) : null}
+              {metadataSummary && canViewInternalDiagnostics ? (
+                <TimelineDetailLine label="附加信息" value={metadataSummary} />
+              ) : null}
+              {hasTokenUsage ? <TokenUsageInline usage={getStepTokenUsage(step.metadata)} /> : null}
+              {richDetail.caveat ? (
+                <p className="rounded-work border border-amber-200 bg-orange-50 p-2 leading-5 text-amberline">
+                  {richDetail.caveat}
+                </p>
+              ) : null}
+            </div>
+          ) : hasDetails ? (
             <div className="space-y-2">
               {inputSummary ? <TimelineDetailLine label="输入摘要" value={inputSummary} /> : null}
               {outputSummary ? <TimelineDetailLine label="处理结果" value={outputSummary} /> : null}
@@ -674,11 +855,15 @@ function TimelineStepCard({
   );
 }
 
-function TimelineDetailLine({ label, value }: { label: string; value: string }) {
+function TimelineDetailLine({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
   return (
     <div className="rounded-work bg-subtle p-2">
       <div className="font-black text-muted">{label}</div>
-      <div className="mt-1 whitespace-pre-wrap break-words text-ink">{value}</div>
+      <div
+        className={`mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-words ${muted ? "text-muted" : "text-ink"}`}
+      >
+        {value}
+      </div>
     </div>
   );
 }
@@ -727,16 +912,16 @@ function ToolsTab({
 function EvidenceTab({
   diagnostics,
   results,
-  promptPreview,
   canViewInternalDiagnostics,
 }: {
   diagnostics: ChatResponse | null;
-  results: RetrievalResult[];
-  promptPreview: RetrievalPromptPreviewResponse | null;
+  results: RetrievedItem[];
   canViewInternalDiagnostics: boolean;
 }) {
   const citations = diagnostics?.evidence_citations ?? [];
-  const promptContext = diagnostics?.prompt_context_items || promptPreview?.prompt_context_items || [];
+  // 证据只认本次 `/chat/prompt` 的响应；不再用另一次检索请求的结果来补（P0-3）。
+  const promptContext = diagnostics?.prompt_context_items ?? [];
+  const retrievalCount = diagnostics?.trace?.retrieval_count;
 
   return (
     <>
@@ -750,13 +935,13 @@ function EvidenceTab({
                     {item.evidence_role || "evidence"}
                   </span>
                   <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
-                    {item.intent || item.category || "-"}
+                    {item.intent || item.category || "后端未返回意图/分类"}
                   </span>
                   <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
-                    {item.knowledge_id || item.evidence_id || `kb_${index + 1}`}
+                    {item.knowledge_id || item.evidence_id || "后端未返回证据 id"}
                   </span>
                   <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
-                    v{item.version ?? "-"}
+                    v{item.version ?? "未返回"}
                   </span>
                   {item.updated_at ? (
                     <span className="rounded-full bg-subtle px-2 py-1 font-black text-muted">
@@ -764,35 +949,46 @@ function EvidenceTab({
                     </span>
                   ) : null}
                 </div>
-                <p className="font-black text-ink">{item.title || item.evidence_id || `evidence_${index + 1}`}</p>
+                <p className="font-black text-ink">{item.title || "后端未返回标题"}</p>
                 {item.source ? <p className="mt-1 font-bold text-muted">来源：{item.source}</p> : null}
-                <p className="mt-1 text-muted">{item.quote || "-"}</p>
+                <p className="mt-1 text-muted">{item.quote || "后端未返回引用片段"}</p>
               </div>
             ))}
           </div>
         ) : results.length ? (
-          results.map((item) => (
+          results.map((item, index) => (
             <EvidenceCard
-              key={`${item.rank}-${item.question}`}
+              key={`${item.rank}-${item.question}-${index}`}
               item={item}
               canViewInternalDiagnostics={canViewInternalDiagnostics}
             />
           ))
         ) : (
-          <EmptyState title="暂无证据" text="发送问题后展示 primary/supporting evidence。" compact />
+          <Notice
+            tone="neutral"
+            title="本次没有检索证据"
+            detail={
+              retrievalCount === 0
+                ? "trace.retrieval_count = 0：本次请求没有召回任何证据（本机恒走降级时就是这样）。"
+                : "后端未返回 retrieved_items / evidence_citations。"
+            }
+            action="这不是「没有资料」的结论。要单独看检索结果，请去「检索实验台」主动触发一次检索。"
+          />
         )}
       </DiagnosticSection>
       {canViewInternalDiagnostics ? (
         <DiagnosticSection title="prompt context">
           <div className="space-y-2">
             {promptContext.length ? (
-              promptContext.map((item) => (
-                <div key={`${item.rank}-${item.role}-${item.question}`} className="rounded-work bg-white p-2 text-xs leading-5">
+              promptContext.map((item, index) => (
+                <div key={`${item.rank}-${item.role}-${item.question}-${index}`} className="rounded-work bg-white p-2 text-xs leading-5">
                   <span className="font-black">{item.role}</span> · {item.display_title ?? item.question}
                 </div>
               ))
             ) : (
-              <p className="text-xs text-muted">暂无 prompt context。</p>
+              <p className="text-xs text-muted">
+                本次响应未返回 prompt_context_items（进 prompt 的证据条数为 0）。
+              </p>
             )}
           </div>
         </DiagnosticSection>
@@ -815,6 +1011,25 @@ function MemoryTab({
   onCopyEvalCase: (feedbackId: number) => Promise<void>;
 }) {
   const memory = diagnostics?.memory_snapshot;
+  const shortTerm = memory?.short_term;
+  const longTerm = memory?.long_term;
+  const recentMessages = shortTerm?.recent_messages ?? [];
+
+  /** `Record<string, unknown>` → 多行 `k = v`，比裸 JSON 好读。 */
+  const pairsText = (entries: [string, unknown][]) =>
+    entries.map(([key, value]) => `${key} = ${typeof value === "string" ? value : JSON.stringify(value)}`).join("\n");
+
+  /**
+   * 三种状态必须分开：「字段不存在」「返回了空对象」「有内容」。
+   * 返回空串交给 MemoryLine 去说「未返回」。
+   */
+  const recordText = (obj: Record<string, unknown> | undefined, emptyHint: string) => {
+    if (obj === undefined) {
+      return "";
+    }
+    const entries = Object.entries(obj);
+    return entries.length ? pairsText(entries) : emptyHint;
+  };
 
   return (
     <>
@@ -826,12 +1041,45 @@ function MemoryTab({
           <MetricMini label="long memory" value={getLongMemoryUsed(diagnostics)} />
         </div>
         <div className="mt-3 space-y-2 text-xs leading-5">
-          <MemoryLine label="短期摘要" value={memory?.short_term_summary || memory?.session_summary} />
-          <MemoryLine label="订单状态" value={memory?.current_order_state} />
-          <MemoryLine label="长期字段" value={memory?.used_fields?.join("，")} />
-          <pre className="mono-block max-h-40 overflow-auto whitespace-pre-wrap rounded-work bg-white p-2">
-            {JSON.stringify(memory?.long_term_memory ?? memory?.user_memory ?? {}, null, 2)}
-          </pre>
+          <MemoryLine
+            label="短期摘要 · short_term.summary"
+            value={shortTerm?.summary || (shortTerm ? "（返回了空值：该会话还没生成摘要）" : "")}
+          />
+          <MemoryLine
+            label="会话事实 · short_term.facts"
+            value={recordText(shortTerm?.facts, "（返回了空对象：该会话还没有沉淀出结构化事实）")}
+          />
+          <MemoryLine
+            label={`喂给模型的历史消息 · short_term.recent_messages（${recentMessages.length} 条）`}
+            value={recentMessages
+              .map((message, index) => {
+                const who = message.role === "assistant" ? "客服" : "用户";
+                const intent = message.intent?.primary_intent ? `（意图：${message.intent.primary_intent}）` : "";
+                return `${index + 1}. ${who}${intent}：${message.content || "（未返回内容）"}`;
+              })
+              .join("\n")}
+          />
+          <MemoryLine
+            label="长期画像字段 · long_term.fields"
+            value={recordText(longTerm?.fields, "（返回了空对象：本轮没有长期画像字段参与）")}
+          />
+          <MemoryLine
+            label="本次新写入 · long_term.updated_fields"
+            value={recordText(longTerm?.updated_fields, "（返回了空对象：本次没有新写入字段）")}
+          />
+          {longTerm?.priority_note ? (
+            <p className="rounded-work bg-white p-2 text-muted">{longTerm.priority_note}</p>
+          ) : null}
+          <p className="rounded-work bg-white p-2 text-muted">
+            口径说明：上面 4 个计数来自 <code>context_used</code>（后端在检索前统计），
+            下面的 <code>recent_messages</code> 来自 <code>memory_snapshot</code>（整轮结束后的快照），
+            两者相差 1 条属于正常（差值就是当前这一轮），不是数据不一致。
+          </p>
+          <p className="rounded-work border border-amber-200 bg-orange-50 p-2 text-amberline">
+            字段路径按后端 build_memory_snapshot（chat_service.py:602）对齐。此前这里读的
+            short_term_summary / current_order_state / used_fields / long_term_memory 实测都不存在，
+            除了上面 4 个计数外全部显示「未返回」。
+          </p>
         </div>
       </DiagnosticSection>
       <DiagnosticSection title="ops metrics">
@@ -882,17 +1130,15 @@ function MemoryTab({
   );
 }
 
-function RawJsonTab({
-  diagnostics,
-  promptPreview,
-}: {
-  diagnostics: ChatResponse | null;
-  promptPreview: RetrievalPromptPreviewResponse | null;
-}) {
+function RawJsonTab({ diagnostics }: { diagnostics: ChatResponse | null }) {
   return (
     <DiagnosticSection title="原始 JSON">
+      <p className="mb-2 text-[11px] leading-5 text-muted">
+        这里只显示本次 <code>/chat/prompt</code> 的响应。后端没有 GET /traces/&#123;id&#125;：
+        重新打开会话只能拿回最近一次的响应（/chat/history.latest_response），更早的取不回来。
+      </p>
       <pre className="mono-block max-h-[520px] overflow-auto whitespace-pre-wrap rounded-work bg-white p-3 text-xs leading-5">
-        {JSON.stringify(diagnostics ?? promptPreview ?? {}, null, 2)}
+        {diagnostics ? JSON.stringify(diagnostics, null, 2) : "本次会话还没有请求记录。"}
       </pre>
     </DiagnosticSection>
   );
@@ -907,10 +1153,7 @@ function AnswerBasisCard({ diagnostics }: { diagnostics: ChatResponse }) {
     ?.map((tool) => `${tool.tool_name || "tool"}:${tool.status || "-"}`)
     .join("，");
   const fallbackApplied = diagnostics.safety_status?.fallback_applied || diagnostics.trace?.reply_rules_applied;
-  const handoffReason =
-    diagnostics.handoff_ticket?.reason ||
-    diagnostics.handoff_ticket?.context_summary ||
-    diagnostics.handoff_recommendation?.reason;
+  const handoffReason = diagnostics.handoff_ticket?.reason || diagnostics.handoff_ticket?.context_summary;
 
   return (
     <div className="rounded-work border border-line bg-white p-3 text-xs leading-5">
@@ -921,12 +1164,30 @@ function AnswerBasisCard({ diagnostics }: { diagnostics: ChatResponse }) {
       <div className="grid gap-2 md:grid-cols-2">
         <BasisLine
           label="主证据"
-          value={primaryCitation?.title || primaryCitation?.intent || primaryRetrieved?.display_title || primaryRetrieved?.intent || "-"}
+          value={
+            primaryCitation?.title ||
+            primaryCitation?.intent ||
+            primaryRetrieved?.display_title ||
+            primaryRetrieved?.intent ||
+            "本次无主证据（见下方原因）"
+          }
         />
-        <BasisLine label="引用片段" value={primaryCitation?.quote || primaryRetrieved?.evidence_summary || primaryRetrieved?.answer || "-"} />
-        <BasisLine label="订单工具" value={toolSummary || "-"} />
+        <BasisLine
+          label="引用片段"
+          value={
+            primaryCitation?.quote ||
+            primaryRetrieved?.evidence_summary ||
+            primaryRetrieved?.answer ||
+            "本次无引用片段"
+          }
+        />
+        <BasisLine label="订单工具" value={toolSummary || "后端未返回 tool_results"} />
         <BasisLine label="兜底/人工" value={handoffReason || (fallbackApplied ? "已触发规则兜底" : "未触发")} />
       </div>
+      <p className="mt-2 text-[11px] leading-5 text-muted">
+        依据来源：本次 <code>/chat/prompt</code> 的 <code>evidence_citations</code> /{' '}
+        <code>prompt_context_items</code> / <code>retrieved_items</code>。
+      </p>
     </div>
   );
 }
@@ -971,10 +1232,18 @@ function TraceFallback({ diagnostics }: { diagnostics: ChatResponse | null }) {
 }
 
 function MemoryLine({ label, value }: { label: string; value?: string }) {
+  // 不再用裸 `-`：缺值必须说明是「后端没返回」还是「返回了但为空」。
+  const hasValue = Boolean(value && value.trim());
   return (
     <div className="rounded-work bg-white p-2">
-      <span className="font-black text-ink">{label}：</span>
-      <span className="text-muted">{value || "-"}</span>
+      <div className="font-black text-ink">{label}</div>
+      <div
+        className={`mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words ${
+          hasValue ? "text-muted" : "text-muted/70"
+        }`}
+      >
+        {hasValue ? value : "未返回（后端未返回该字段）"}
+      </div>
     </div>
   );
 }
@@ -989,9 +1258,17 @@ function DiagnosticSection({ title, children }: { title: string; children: React
 }
 
 function MetricMini({ label, value, title }: { label: string; value?: number | string; title?: string }) {
+  // 旧实现是 `{value ?? 0}` —— 把「后端没返回」显示成 0。缺数据和真实 0 是两件事，
+  // 这是本项目明令禁止的写法（`|| 0` 同理）。
+  const missing = value === undefined || value === null || value === "";
   return (
-    <div className="min-w-0 rounded-work bg-white p-2" title={title}>
-      <div className="truncate font-black text-ink">{value ?? 0}</div>
+    <div
+      className="min-w-0 rounded-work bg-white p-2"
+      title={title ?? (missing ? "后端未返回该字段" : undefined)}
+    >
+      <div className={`break-words font-black ${missing ? "text-muted" : "text-ink"}`}>
+        {missing ? "未返回" : value}
+      </div>
       <div className="mt-1 text-[10px] font-bold text-muted">{label}</div>
     </div>
   );
@@ -1043,10 +1320,25 @@ function IntentSummary({ intentAnalysis }: { intentAnalysis?: IntentAnalysis }) 
   return (
     <div className="space-y-2 text-xs">
       <div className="grid grid-cols-2 gap-2">
-        <MetricMini label="primary" value={intentAnalysis.primary_intent ?? "-"} />
-        <MetricMini label="risk" value={intentAnalysis.risk_level ?? "-"} />
-        <MetricMini label="routing" value={intentAnalysis.routing ?? "-"} />
-        <MetricMini label="secondary" value={intentAnalysis.secondary_intents?.join("，") || "-"} />
+        <MetricMini label="primary" value={intentAnalysis.primary_intent} />
+        <MetricMini label="risk" value={intentAnalysis.risk_level ? describeRiskLevel(intentAnalysis.risk_level) : undefined} />
+      </div>
+      <div className="grid grid-cols-1 gap-2">
+        <MetricMini
+          label="routing（这条请求走哪条链路，不是风险结论）"
+          value={intentAnalysis.routing ? describeRouting(intentAnalysis.routing) : undefined}
+          title={intentAnalysis.routing ?? ""}
+        />
+        <MetricMini
+          label="secondary（次要意图）"
+          value={
+            intentAnalysis.secondary_intents === undefined
+              ? "未返回（后端未返回 secondary_intents）"
+              : intentAnalysis.secondary_intents.length
+                ? intentAnalysis.secondary_intents.join("，")
+                : "无（本次只有 1 个意图命中）"
+          }
+        />
       </div>
       {intentAnalysis.intents?.length ? (
         <div className="space-y-2">
@@ -1114,7 +1406,7 @@ function EvidenceCard({
   item,
   canViewInternalDiagnostics,
 }: {
-  item: RetrievalResult;
+  item: RetrievedItem;
   canViewInternalDiagnostics: boolean;
 }) {
   const penalty = item.direction_penalty ?? 0;
@@ -1126,7 +1418,7 @@ function EvidenceCard({
           {item.rank}
         </span>
         <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-black text-leaf">
-          {item.intent ?? "intent"}
+          {item.intent || "本次证据未带意图字段"}
         </span>
         {canViewInternalDiagnostics && penalty > 0 ? (
           <span className="rounded-full bg-orange-50 px-2 py-1 text-[11px] font-black text-amberline">
@@ -1283,11 +1575,7 @@ function buildTimelineMetadataSummary(metadata?: Record<string, unknown>, includ
 }
 
 function formatRate(value?: number) {
-  return typeof value === "number" ? `${Math.round(value * 100)}%` : "-";
-}
-
-function formatTokenCount(value?: number) {
-  return typeof value === "number" ? value.toLocaleString("en-US") : "-";
+  return typeof value === "number" ? `${Math.round(value * 100)}%` : "未返回";
 }
 
 function formatTokenUsageTitle(usage?: TokenUsage) {
@@ -1312,13 +1600,17 @@ function getStepTokenUsage(metadata?: Record<string, unknown>): TokenUsage | und
 }
 
 function getRiskLevel(diagnostics: ChatResponse | null) {
-  return diagnostics?.intent_analysis?.risk_level ?? diagnostics?.trace?.intent_analysis?.risk_level ?? "-";
+  // ChatTrace 契约里没有 intent_analysis（那是顶层字段）。旧代码读 trace.intent_analysis 是漂移。
+  return diagnostics?.intent_analysis?.risk_level ?? "未返回";
 }
 
 function getLongMemoryUsed(diagnostics: ChatResponse | null) {
-  const used = diagnostics?.memory_snapshot?.used_long_term_memory;
+  // 真实字段是 memory_snapshot.long_term.used（后端 build_memory_snapshot）。
+  // 旧实现读 used_long_term_memory —— 该字段实测不存在，于是退化成
+  // 「有 memory_snapshot 就报 yes」，那不是读到的值，是猜出来的。
+  const used = diagnostics?.memory_snapshot?.long_term?.used;
   if (typeof used === "boolean") {
     return used ? "yes" : "no";
   }
-  return diagnostics?.memory_snapshot ? "yes" : "-";
+  return "未返回";
 }

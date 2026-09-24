@@ -1,57 +1,41 @@
 import { apiRequest } from "./client";
-import type { PromptVersionItem, PromptVersionListResponse, PromptVersionPayload } from "../types/api";
+import type {
+  PromptVersionItem,
+  PromptVersionListResponse,
+  PromptVersionPayload,
+} from "../types/api";
 
-const promptReadHeaders = {
-  "X-Operator-Id": "supervisor_demo",
-  "X-User-Role": "supervisor",
-};
-
-const promptWriteHeaders = {
-  "X-Operator-Id": "admin_demo",
-  "X-User-Role": "admin",
-};
-
-export async function getActivePromptVersion() {
-  return apiRequest<PromptVersionItem>("/prompt/active", {
-    headers: promptReadHeaders,
-  });
+/** 读需要 `read:prompt_read`（supervisor / qa / admin）。 */
+export async function getActivePromptVersion(): Promise<PromptVersionItem> {
+  return apiRequest<PromptVersionItem>("/prompt/active");
 }
 
-export async function listPromptVersions(limit = 10) {
-  return apiRequest<PromptVersionListResponse>(`/prompt/versions?limit=${limit}`, {
-    headers: promptReadHeaders,
-  });
+export async function listPromptVersions(limit = 10): Promise<PromptVersionListResponse> {
+  return apiRequest<PromptVersionListResponse>("/prompt/versions", { query: { limit } });
 }
 
-export async function createPromptVersion(body: PromptVersionPayload) {
+/** 写需要 `write:prompt_write`（**仅 admin**）。 */
+export async function createPromptVersion(body: PromptVersionPayload): Promise<PromptVersionItem> {
   return apiRequest<PromptVersionItem, PromptVersionPayload>("/prompt/versions", {
     method: "POST",
     body,
-    headers: promptWriteHeaders,
   });
 }
 
-export async function approvePromptVersion(id: number, evaluationResult = "") {
+export async function approvePromptVersion(
+  id: number,
+  evaluationResult = "",
+): Promise<PromptVersionItem> {
   return apiRequest<PromptVersionItem, { status: "approved"; evaluation_result: string }>(
     `/prompt/versions/${id}/status`,
-    {
-      method: "POST",
-      body: { status: "approved", evaluation_result: evaluationResult },
-      headers: promptWriteHeaders,
-    },
+    { method: "POST", body: { status: "approved", evaluation_result: evaluationResult } },
   );
 }
 
-export async function activatePromptVersion(id: number) {
-  return apiRequest<PromptVersionItem>(`/prompt/versions/${id}/activate`, {
-    method: "POST",
-    headers: promptWriteHeaders,
-  });
+export async function activatePromptVersion(id: number): Promise<PromptVersionItem> {
+  return apiRequest<PromptVersionItem>(`/prompt/versions/${id}/activate`, { method: "POST" });
 }
 
-export async function rollbackLatestPromptVersion() {
-  return apiRequest<PromptVersionItem>("/prompt/rollback-latest", {
-    method: "POST",
-    headers: promptWriteHeaders,
-  });
+export async function rollbackLatestPromptVersion(): Promise<PromptVersionItem> {
+  return apiRequest<PromptVersionItem>("/prompt/rollback-latest", { method: "POST" });
 }

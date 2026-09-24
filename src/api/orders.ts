@@ -1,15 +1,10 @@
 import { apiRequest } from "./client";
-import type { OrderStatePayload } from "../types/api";
+import type { OrderStatePayload, OrderStateResponse } from "../types/api";
 
-const orderWriteHeaders = {
-  "X-Operator-Id": "agent_demo",
-  "X-User-Role": "agent",
-};
-
-export async function saveOrderState(payload: OrderStatePayload) {
-  return apiRequest<OrderStatePayload, OrderStatePayload>(`/orders/${payload.order_id}/state`, {
-    method: "PUT",
-    body: payload,
-    headers: orderWriteHeaders,
-  });
+/** 需要 `write:order_state_upsert`（agent / supervisor / admin）。 */
+export async function saveOrderState(payload: OrderStatePayload): Promise<OrderStateResponse> {
+  return apiRequest<OrderStateResponse, OrderStatePayload>(
+    `/orders/${encodeURIComponent(payload.order_id)}/state`,
+    { method: "PUT", body: payload },
+  );
 }

@@ -1,34 +1,25 @@
 import { apiRequest } from "./client";
-import type { ExportEvalCaseResponse, FeedbackRequest, RecentFeedbackResponse } from "../types/api";
+import type {
+  ExportEvalCaseResponse,
+  FeedbackRequest,
+  FeedbackResponse,
+  RecentFeedbackResponse,
+} from "../types/api";
 
-const feedbackWriteHeaders = {
-  "X-Operator-Id": "agent_demo",
-  "X-User-Role": "agent",
-};
+export async function submitFeedback(body: FeedbackRequest): Promise<FeedbackResponse> {
+  return apiRequest<FeedbackResponse, FeedbackRequest>("/feedback", { method: "POST", body });
+}
 
-const feedbackReadHeaders = {
-  "X-Operator-Id": "qa_demo",
-  "X-User-Role": "qa",
-};
-
-export async function submitFeedback(body: FeedbackRequest) {
-  return apiRequest<{ feedback_id: number; saved: boolean }, FeedbackRequest>("/feedback", {
-    method: "POST",
-    body,
-    headers: feedbackWriteHeaders,
+/** 需要 `read:feedback_read` —— **agent 角色没有这个 scope**。 */
+export async function getRecentFeedback(limit = 5): Promise<RecentFeedbackResponse> {
+  return apiRequest<RecentFeedbackResponse>("/feedback/recent", {
+    query: { helpful: false, limit },
   });
 }
 
-export async function getRecentFeedback() {
-  return apiRequest<RecentFeedbackResponse>("/feedback/recent?helpful=false&limit=5", {
-    headers: feedbackReadHeaders,
-  });
-}
-
-export async function exportEvalCase(feedbackId: number) {
-  return apiRequest<ExportEvalCaseResponse, { feedback_id: number }>("/feedback/export-eval-case", {
-    method: "POST",
-    body: { feedback_id: feedbackId },
-    headers: feedbackWriteHeaders,
-  });
+export async function exportEvalCase(feedbackId: number): Promise<ExportEvalCaseResponse> {
+  return apiRequest<ExportEvalCaseResponse, { feedback_id: number }>(
+    "/feedback/export-eval-case",
+    { method: "POST", body: { feedback_id: feedbackId } },
+  );
 }

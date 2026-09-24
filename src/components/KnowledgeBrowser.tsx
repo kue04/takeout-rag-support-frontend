@@ -73,12 +73,12 @@ export default function KnowledgeBrowser({
           ) : null}
           {examples.map((example) => (
             <article
-              key={`${example.category ?? selectedCategory}-${example.question}`}
+              key={`${selectedCategory}-${example.question}`}
               className="rounded-work border border-line bg-panel p-3"
             >
               <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="rounded-full border border-line bg-subtle px-2 py-1 text-[11px] font-extrabold text-muted">
-                  {example.category ?? selectedCategory}
+                  {selectedCategory}
                 </span>
                 <button
                   className="inline-flex items-center gap-1 rounded-work border border-line bg-panel px-2 py-1 text-[11px] font-extrabold text-ink hover:border-leaf"

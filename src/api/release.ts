@@ -1,13 +1,12 @@
 import { apiRequest } from "./client";
 import type { ReleaseChecklistResponse } from "../types/api";
 
-const releaseReadHeaders = {
-  "X-Operator-Id": "supervisor_demo",
-  "X-User-Role": "supervisor",
-};
-
-export async function getReleaseChecklist() {
-  return apiRequest<ReleaseChecklistResponse>("/release/checklist", {
-    headers: releaseReadHeaders,
-  });
+/**
+ * 只读发布检查。需要 `read:release_read`（supervisor / qa / admin）。
+ *
+ * ⚠️ 后端阶段 7（发布门禁）尚未完成 → **不要预设它已通过**，
+ * 界面必须原样展示 `ready / failed_count / warning_count`。
+ */
+export async function getReleaseChecklist(): Promise<ReleaseChecklistResponse> {
+  return apiRequest<ReleaseChecklistResponse>("/release/checklist");
 }

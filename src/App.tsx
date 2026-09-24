@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Clock3,
   Database,
+  FlaskConical,
   Home,
   MapPin,
   MessageCircle,
@@ -49,7 +50,7 @@ import {
   listPromptVersions,
   rollbackLatestPromptVersion,
 } from "./api/prompt";
-import { getRetrievalConfig, previewRetrievalPrompt, searchRetrieval } from "./api/retrieval";
+import { getRetrievalConfig } from "./api/retrieval";
 import { getReleaseChecklist } from "./api/release";
 import {
   dishes,
@@ -62,9 +63,13 @@ import {
   type TakeoutOrder,
 } from "./data/marketplace";
 import { EmptyState } from "./components/EmptyState";
+import { Notice } from "./components/Notice";
 import { SupportView } from "./features/support/SupportView";
 import { KnowledgeOpsView } from "./features/knowledge/KnowledgeOpsView";
 import { ProjectShowcaseView } from "./features/showcase/ProjectShowcaseView";
+import { RetrievalLabView } from "./features/retrieval/RetrievalLabView";
+import { getTokenRoles, hasAuthToken } from "./api/client";
+import { describeApiError, errorMessage, type ErrorPresentation } from "./lib/status";
 import type {
   ChatMessage,
   ChatReviewAction,
@@ -81,15 +86,22 @@ import type {
   PromptVersionItem,
   PromptVersionPayload,
   ReleaseChecklistResponse,
+  RetrievedItem,
   RetrievalConfig,
-  RetrievalMode,
-  RetrievalPromptPreviewResponse,
-  RetrievalResult,
 } from "./types/api";
 
 gsap.registerPlugin(useGSAP);
 
-type View = "home" | "store" | "checkout" | "orders" | "orderDetail" | "support" | "knowledge" | "showcase";
+type View =
+  | "home"
+  | "store"
+  | "checkout"
+  | "orders"
+  | "orderDetail"
+  | "support"
+  | "knowledge"
+  | "retrieval"
+  | "showcase";
 type Cart = Record<string, number>;
 type SupportSessionMap = Record<string, string>;
 
@@ -97,9 +109,22 @@ const storageKey = "takeout-rag-orders";
 const userStorageKey = "takeout-rag-user-id";
 const supportSessionStorageKey = "takeout-rag-support-sessions";
 const userAddress = "杭州西湖区文三路 168 号";
-const supportOperatorRole = "agent";
-const canViewInternalDiagnostics = ["qa", "admin"].includes(supportOperatorRole);
-const retrievalMode: RetrievalMode = "hybrid";
+/**
+ * 前端不再自报身份（旧的 X-Operator-Id / X-User-Role 已彻底失效）。
+ * 页面可见性只由令牌里的角色决定；这里的值仅用于「内部诊断」这类展示级开关，
+ * 真正的判定永远在后端（403 由后端给）。
+ */
+const INTERNAL_DIAGNOSTIC_ROLES = ["qa", "admin"];
+/**
+ * 角色从令牌 payload 读，不再写死。
+ *
+ * 旧实现是 `const supportOperatorRole = "agent"` —— 常量，永远不变，
+ * 于是「记忆 / JSON」两个诊断 tab 在任何环境下都看不到。后果不只是少两个 tab：
+ * `memory_snapshot` 的字段漂移（前端读的 7 个字段名全不存在）因此长期无人发现。
+ * 令牌解不出来时按最低可见性处理，宁可少显示，不可假装有权限。
+ */
+const tokenRoles = getTokenRoles();
+const canViewInternalDiagnostics = tokenRoles.some((role) => INTERNAL_DIAGNOSTIC_ROLES.includes(role));
 const knowledgeExampleLimit = 20;
 const demoOrderPrefix = "DEMO-";
 
@@ -119,12 +144,16 @@ export default function App() {
 
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfig | null>(null);
-  const [apiError, setApiError] = useState("");
-  const [ragError, setRagError] = useState("");
+  const [apiError, setApiError] = useState<ErrorPresentation | null>(null);
+  const [ragError, setRagError] = useState<ErrorPresentation | null>(null);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(() => getWelcomeMessages());
-  const [retrievalResults, setRetrievalResults] = useState<RetrievalResult[]>([]);
-  const [promptPreview, setPromptPreview] = useState<RetrievalPromptPreviewResponse | null>(null);
+  /**
+   * 证据区数据源只有一个：本次 `/chat/prompt` 的
+   * `retrieved_items` / `prompt_context_items`。
+   * 不再用另一次 `/retrieval/*` 请求的结果去补 —— 那不是同一次检索（P0-3）。
+   */
+  const [retrievalResults, setRetrievalResults] = useState<RetrievedItem[]>([]);
   const [latestDiagnostics, setLatestDiagnostics] = useState<ChatResponse | null>(null);
   const [latestQuery, setLatestQuery] = useState("");
   const [recentFeedback, setRecentFeedback] = useState<FeedbackItem[]>([]);
@@ -171,11 +200,11 @@ export default function App() {
   useEffect(() => {
     getModelInfo()
       .then(setModelInfo)
-      .catch((error: Error) => setApiError(error.message));
+      .catch((error: unknown) => setApiError(describeApiError(error)));
 
     getRetrievalConfig()
       .then(setRetrievalConfig)
-      .catch((error: Error) => setApiError(error.message));
+      .catch((error: unknown) => setApiError(describeApiError(error)));
 
     void refreshOpsData();
     void refreshKnowledgeItems();
@@ -290,14 +319,25 @@ export default function App() {
     navigate("orderDetail");
   }
 
+  /**
+   * 正常聊天流程 —— 只打一个请求（P0-3）。
+   *
+   * 三条纪律：
+   *  1. `message` 只发用户原问题。旧实现用 `buildOrderContextMessage()` 把订单号/金额/
+   *     店铺拼进 message，等于偷偷替换用户原文（验收规范 §5.2 明令禁止）；
+   *     订单上下文走后端已有的 `order_id` 字段。
+   *  2. 不再用 `Promise.allSettled` 并发 `/retrieval/search` + `/retrieval/prompt-preview`：
+   *     检索由「检索实验台」主动触发，聊天链路不碰。
+   *  3. 证据区从本次响应的 `retrieved_items` / `prompt_context_items` 取。
+   */
   async function sendSupportMessage(question: string) {
     const normalizedQuestion = question.trim();
     if (!normalizedQuestion || !activeOrder) {
       return;
     }
 
-    setApiError("");
-    setRagError("");
+    setApiError(null);
+    setRagError(null);
     setFeedbackStatus("");
     setReviewStatus("");
     setLatestQuery(normalizedQuestion);
@@ -307,68 +347,48 @@ export default function App() {
       { id: crypto.randomUUID(), role: "user", content: normalizedQuestion },
     ]);
 
-    const messageWithContext = buildOrderContextMessage(activeOrder, normalizedQuestion);
     const currentSessionId = supportSessions[activeOrder.id] ?? null;
-    const retrievalPayload = {
-      query: normalizedQuestion,
-      mode: retrievalMode,
-      limit: 5,
-      min_score: 0.62,
-    };
 
     try {
       await persistOrderState(activeOrder);
-      const [chatResult, searchResult, previewResult] = await Promise.allSettled([
-        sendChatPrompt({
-          message: messageWithContext,
-          user_id: userId,
-          session_id: currentSessionId,
-          order_id: activeOrder.id,
-        }),
-        searchRetrieval(retrievalPayload),
-        previewRetrievalPrompt(retrievalPayload),
+
+      const chat = await sendChatPrompt({
+        // 用户原问题，未经任何改写。
+        message: normalizedQuestion,
+        user_id: userId,
+        session_id: currentSessionId,
+        // 订单上下文走结构化字段，不塞进 message。
+        order_id: activeOrder.id,
+      });
+
+      setLatestDiagnostics(chat);
+
+      if (chat.session_id) {
+        const nextSessionId = chat.session_id;
+        setSupportSessions((current) => {
+          const next = { ...current, [activeOrder.id]: nextSessionId };
+          saveSupportSessions(next);
+          return next;
+        });
+      }
+
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: chat.reply,
+          confidenceScore: chat.confidence_score,
+          retrievedDocuments: chat.retrieved_documents,
+        },
       ]);
 
-      if (searchResult.status === "fulfilled") {
-        setRetrievalResults(searchResult.value.results);
-      } else {
-        setRagError(getErrorMessage(searchResult.reason, "检索接口请求失败"));
-      }
-
-      if (previewResult.status === "fulfilled") {
-        setPromptPreview(previewResult.value);
-      } else {
-        setRagError(getErrorMessage(previewResult.reason, "prompt preview 请求失败"));
-      }
-
-      if (chatResult.status === "fulfilled") {
-        setLatestDiagnostics(chatResult.value);
-
-        if (chatResult.value.session_id) {
-          setSupportSessions((current) => {
-            const next = { ...current, [activeOrder.id]: chatResult.value.session_id as string };
-            saveSupportSessions(next);
-            return next;
-          });
-        }
-
-        setMessages((current) => [
-          ...current,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: chatResult.value.reply,
-            confidenceScore: chatResult.value.confidence_score,
-            retrievedDocuments: chatResult.value.retrieved_documents,
-          },
-        ]);
-
-        if (chatResult.value.retrieved_items?.length) {
-          setRetrievalResults(chatResult.value.retrieved_items);
-        }
-      } else {
-        setApiError(getErrorMessage(chatResult.reason, "客服接口请求失败"));
-      }
+      // 证据区只认本次响应。检索降级时 retrieved_items 为空数组 —— 空就如实说空，
+      // 不拿另一次检索请求的结果来补。（prompt_context_items 形状不同，由 RAG 面板单独展示。）
+      setRetrievalResults(chat.retrieved_items ?? []);
+    } catch (error) {
+      setApiError(describeApiError(error));
+      setRetrievalResults([]);
     } finally {
       setIsChatLoading(false);
     }
@@ -407,7 +427,6 @@ export default function App() {
   function resetSupportState() {
     setMessages(getWelcomeMessages());
     setRetrievalResults([]);
-    setPromptPreview(null);
     setLatestDiagnostics(null);
     setLatestQuery("");
     setFeedbackStatus("");
@@ -423,22 +442,29 @@ export default function App() {
         limit: 80,
       });
       if (history.session_id) {
+        const nextSessionId = history.session_id;
         setSupportSessions((current) => {
-          const next = { ...current, [order.id]: history.session_id };
+          const next = { ...current, [order.id]: nextSessionId };
           saveSupportSessions(next);
           return next;
         });
       }
-      setMessages(history.messages.length ? history.messages.map(historyMessageToChatMessage) : getWelcomeMessages());
-      const latestResponse = history.latest_response?.reply ? history.latest_response : null;
+
+      const historyMessages = history.messages ?? [];
+      setMessages(
+        historyMessages.length ? historyMessages.map(historyMessageToChatMessage) : getWelcomeMessages(),
+      );
+
+      // `/chat/history` 的 `latest_response` 是 Record<string, unknown>（后端回放上一次响应的 JSON）。
+      // 这里做一次显式收窄：只有真的像 ChatResponse 才认，否则当「取不回」处理。
+      const latestResponse = toLatestChatResponse(history.latest_response);
       setLatestDiagnostics(latestResponse);
       setRetrievalResults(latestResponse?.retrieved_items ?? []);
-      setPromptPreview(null);
       setLatestQuery(
-        [...history.messages].reverse().find((message) => message.role === "user")?.content ?? "",
+        [...historyMessages].reverse().find((message) => message.role === "user")?.content ?? "",
       );
     } catch (error) {
-      setRagError(getErrorMessage(error, "客服历史读取失败"));
+      setRagError(describeApiError(error));
     }
   }
 
@@ -446,7 +472,7 @@ export default function App() {
     try {
       await saveOrderState(orderToStatePayload(order, userId));
     } catch (error) {
-      setRagError(getErrorMessage(error, "订单状态持久化失败"));
+      setRagError(describeApiError(error));
     }
   }
 
@@ -454,7 +480,7 @@ export default function App() {
     await navigator.clipboard.writeText(
       buildDebugReport({
         order: activeOrder,
-        results: retrievalResults,
+        evidence: retrievalResults,
         diagnostics: latestDiagnostics,
         includeInternalDiagnostics: canViewInternalDiagnostics,
       }),
@@ -511,7 +537,8 @@ export default function App() {
       helpful,
       reason,
       expected_reply: expectedReply,
-      trace: latestDiagnostics.trace,
+      // 契约里 `trace` 是 `Record<string, unknown>`，ChatTrace 是它的结构化视图 —— 显式转换。
+      trace: latestDiagnostics.trace as unknown as Record<string, unknown>,
     });
     setFeedbackStatus(helpful ? "已记录有帮助反馈" : "已保存 bad case");
     await Promise.all([refreshOpsData(), refreshGovernanceData()]);
@@ -528,11 +555,10 @@ export default function App() {
       return;
     }
 
+    // 不传 operator_id / operator_role：身份只认令牌（后端会忽略前端自报）。
     const result = await submitChatReviewAction({
       request_id: requestId,
       action,
-      operator_id: userId,
-      operator_role: "agent",
       final_reply: finalReply || latestDiagnostics.reply,
       reason,
     });
@@ -693,7 +719,7 @@ export default function App() {
   }
 
   return (
-    <main ref={pageRef} className="min-h-screen w-full max-w-full overflow-x-hidden bg-[#f4f7f5] text-ink">
+    <main ref={pageRef} className="min-h-screen w-full max-w-full overflow-x-hidden bg-paper text-ink">
       <PlatformHeader
         cartCount={cartCount}
         activeView={view}
@@ -703,7 +729,31 @@ export default function App() {
         onNavigate={navigate}
       />
 
-      <div className="mx-auto max-w-[1480px] px-3 pb-24 pt-4 md:px-5 lg:pb-8">
+      <div className="mx-auto max-w-[1480px] px-4 pb-24 pt-4 md:px-6 lg:pb-8">
+        {!hasAuthToken() ? (
+          <Notice
+            tone="warning"
+            title="前端没有配置开发令牌，所有受保护接口都会 401"
+            detail="后端身份只来自 `Authorization: Bearer <JWT>`；`X-User-Role` 这类头自阶段 1 起已彻底失效（只记日志，不参与判定）。"
+            action="在后端跑 scripts/mint_dev_token.py --role admin --format token，把输出写进 .env.local 的 VITE_DEV_TOKEN，然后重启 dev server。"
+            className="mb-4"
+          />
+        ) : null}
+        {apiError ? (
+          <Notice
+            tone={apiError.tone}
+            title={apiError.title}
+            detail={apiError.detail}
+            action={apiError.action}
+            className="mb-4"
+          >
+            <p className="text-[11px] opacity-80">
+              {apiError.path ? `路径：${apiError.path}` : null}
+              {apiError.status ? ` · HTTP ${apiError.status}` : null}
+            </p>
+          </Notice>
+        ) : null}
+
         {view === "home" ? (
           <HomeView
             searchKeyword={searchKeyword}
@@ -761,7 +811,6 @@ export default function App() {
             sessionId={activeSessionId}
             messages={messages}
             retrievalResults={retrievalResults}
-            promptPreview={promptPreview}
             diagnostics={latestDiagnostics}
             apiError={apiError}
             ragError={ragError}
@@ -821,10 +870,12 @@ export default function App() {
           />
         ) : null}
 
+        {view === "retrieval" ? <RetrievalLabView onBack={() => navigate("home")} /> : null}
+
         {view === "showcase" ? <ProjectShowcaseView onBack={() => navigate("home")} /> : null}
       </div>
 
-      {cartCount > 0 && view !== "checkout" && view !== "support" && view !== "showcase" ? (
+      {cartCount > 0 && view !== "checkout" && view !== "support" && view !== "retrieval" && view !== "showcase" ? (
         <CartBar
           refButton={cartButtonRef}
           count={cartCount}
@@ -852,34 +903,37 @@ function PlatformHeader({
   activeView: View;
   modelInfo: ModelInfo | null;
   retrievalConfig: RetrievalConfig | null;
-  apiError: string;
+  apiError: ErrorPresentation | null;
   onNavigate: (view: View) => void;
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-white">
-      <div className="mx-auto flex max-w-[1480px] items-center gap-3 px-3 py-3 md:px-5">
+      <div className="mx-auto flex max-w-[1480px] items-center gap-3 px-4 py-3 md:px-6">
         <button
-          className="flex items-center gap-2 rounded-work bg-ink px-3 py-2 text-sm font-extrabold text-white"
+          className="flex items-center gap-2 rounded-work bg-ink px-3 py-2 text-sm font-bold text-white"
           type="button"
           onClick={() => onNavigate("home")}
         >
-          <ShoppingBag size={17} />
+          <ShoppingBag size={17} aria-hidden />
           即时外卖
         </button>
         <div className="hidden min-w-0 flex-1 items-center gap-2 rounded-work border border-line bg-subtle px-3 py-2 text-sm text-muted md:flex">
-          <MapPin size={16} className="shrink-0 text-leaf" />
+          <MapPin size={16} className="shrink-0 text-leaf" aria-hidden />
           <span className="truncate">{userAddress}</span>
         </div>
         <div className="hidden items-center gap-2 rounded-work border border-line bg-white px-3 py-2 text-xs font-bold text-muted lg:flex">
-          <Bot size={15} className={apiError ? "text-danger" : "text-leaf"} />
+          <Bot size={15} className={apiError ? "text-danger" : "text-leaf"} aria-hidden />
           <span>{modelInfo?.base_model ?? "模型状态加载中"}</span>
           <span className="text-line">|</span>
-          <span>{retrievalConfig?.reranker_model ?? "RAG 配置加载中"}</span>
+          <span>{retrievalConfig?.reranker_model_name ?? "RAG 配置加载中"}</span>
         </div>
         {apiError ? (
-          <div className="hidden max-w-[300px] items-center gap-2 rounded-work border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 xl:flex">
-            <AlertCircle size={15} />
-            <span className="truncate">{apiError}</span>
+          <div
+            className="hidden max-w-[300px] items-center gap-2 rounded-work border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 xl:flex"
+            title={`${apiError.title}：${apiError.detail}`}
+          >
+            <AlertCircle size={15} aria-hidden />
+            <span className="truncate">{apiError.title}</span>
           </div>
         ) : null}
         <button
@@ -893,12 +947,22 @@ function PlatformHeader({
         </button>
         <button
           className={`hidden items-center gap-2 rounded-work px-3 py-2 text-sm font-bold md:inline-flex ${
+            activeView === "retrieval" ? "bg-emerald-50 text-leaf" : "text-muted hover:bg-subtle"
+          }`}
+          type="button"
+          onClick={() => onNavigate("retrieval")}
+        >
+          <FlaskConical size={16} aria-hidden />
+          检索实验台
+        </button>
+        <button
+          className={`hidden items-center gap-2 rounded-work px-3 py-2 text-sm font-bold md:inline-flex ${
             activeView === "knowledge" ? "bg-emerald-50 text-leaf" : "text-muted hover:bg-subtle"
           }`}
           type="button"
           onClick={() => onNavigate("knowledge")}
         >
-          <Database size={16} />
+          <Database size={16} aria-hidden />
           知识运营
         </button>
         <button
@@ -908,7 +972,7 @@ function PlatformHeader({
           type="button"
           onClick={() => onNavigate("showcase")}
         >
-          <Sparkles size={16} />
+          <Sparkles size={16} aria-hidden />
           项目展示
         </button>
         <button
@@ -916,10 +980,11 @@ function PlatformHeader({
           type="button"
           onClick={() => onNavigate(cartCount ? "checkout" : "home")}
           title="购物车"
+          aria-label="购物车"
         >
-          <ShoppingCart size={18} />
+          <ShoppingCart size={18} aria-hidden />
           {cartCount ? (
-            <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-amberline px-1 text-[11px] font-extrabold text-white">
+            <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-amberline px-1 text-[11px] font-bold text-white">
               {cartCount}
             </span>
           ) : null}
@@ -1510,7 +1575,7 @@ function MobileNav({
   const items = [
     { view: "home" as View, label: "首页", icon: Home },
     { view: "orders" as View, label: "订单", icon: PackageCheck },
-    { view: "showcase" as View, label: "展示", icon: Sparkles },
+    { view: "retrieval" as View, label: "检索", icon: FlaskConical },
     { view: cartCount ? ("checkout" as View) : ("home" as View), label: "购物车", icon: ShoppingCart },
   ];
 
@@ -1594,15 +1659,30 @@ function getWelcomeMessages(): ChatMessage[] {
 }
 
 function historyMessageToChatMessage(message: {
-  role: "user" | "assistant";
+  role: string;
   content: string;
   created_at?: string;
 }): ChatMessage {
   return {
     id: `${message.role}-${message.created_at || crypto.randomUUID()}`,
-    role: message.role,
+    // 后端 ChatHistoryMessage.role 是 string；只认 user / assistant，其他一律当 assistant 展示。
+    role: message.role === "user" ? "user" : "assistant",
     content: message.content,
   };
+}
+
+/**
+ * `/chat/history` 的 `latest_response` 是 `Record<string, unknown>`（后端回放上一次响应的 JSON）。
+ * 这里做显式收窄：只有关键字段在位才认，否则返回 null 并让 UI 显示「取不回」。
+ *
+ * 后端缺陷（交接文档 §6.4）：没有 `GET /traces/{id}`，所以更早的请求诊断取不回来，
+ * 只有最近一次能回放 —— 这里不假装能拿到更多。
+ */
+function toLatestChatResponse(value: Record<string, unknown> | undefined | null): ChatResponse | null {
+  if (!value || typeof value.reply !== "string" || typeof value.final_prompt !== "string") {
+    return null;
+  }
+  return value as unknown as ChatResponse;
 }
 
 function getOrCreateUserId() {
@@ -1629,15 +1709,18 @@ function saveSupportSessions(sessions: SupportSessionMap) {
   localStorage.setItem(supportSessionStorageKey, JSON.stringify(sessions));
 }
 
-function buildOrderContextMessage(order: TakeoutOrder, question: string) {
-  return `订单上下文：
-订单号：${order.id}
+/**
+ * 订单摘要。只用于本地展示与调试报告** ——
+ * 不再拼进 `/chat/prompt` 的 `message`（那等于偷偷替换用户原文，验收规范 §5.2 禁止）。
+ * 订单上下文通过 `order_id` 字段传给后端。
+ */
+function buildOrderSummary(order: TakeoutOrder) {
+  return `订单号：${order.id}
 店铺：${order.storeName}
 商品：${order.items.map((item) => `${item.name} x${item.quantity}`).join("，")}
 订单状态：${order.status}
 配送状态：${order.deliveryStatus}
-支付金额：¥${order.total.toFixed(1)}
-用户问题：${question}`;
+支付金额：¥${order.total.toFixed(1)}`;
 }
 
 function createScenarioOrder(scenario: { id: string; status: OrderStatus; deliveryStatus: string }): TakeoutOrder {
@@ -1690,30 +1773,33 @@ function getRefundStatusForOrder(status: OrderStatus) {
 
 function buildDebugReport({
   order,
-  results,
+  evidence,
   diagnostics,
   includeInternalDiagnostics,
 }: {
   order: TakeoutOrder | null;
-  results: RetrievalResult[];
+  evidence: RetrievedItem[];
   diagnostics: ChatResponse | null;
   includeInternalDiagnostics: boolean;
 }) {
   const publicReport = `# 外卖订单客服处理摘要
 
 ## 订单
-${order ? buildOrderContextMessage(order, "") : "-"}
+${order ? buildOrderSummary(order) : "-"}
 
-## 检索证据
-${results
-  .map((item) => `- #${item.rank} ${item.intent ?? "-"}：${item.question}`)
-  .join("\n") || "-"}
+## 本次检索证据（来自当次 /chat/prompt 的 retrieved_items）
+${
+  evidence.length
+    ? evidence.map((item) => `- #${item.rank} ${item.intent ?? "（无意图字段）"}：${item.question}`).join("\n")
+    : `- 无（${diagnostics?.trace?.retrieval_count === 0 ? "trace.retrieval_count = 0" : "后端未返回检索结果"}）`
+}
 
 ## 处理结论
 - risk: ${diagnostics?.risk_level ?? "-"}
-- confidence: ${diagnostics?.confidence_level ?? "-"}
+- confidence: ${diagnostics?.confidence_level ?? "-"}（模型评分，非正确概率）
 - review: ${diagnostics?.human_review_reason ?? "-"}
 - tools: ${diagnostics?.tool_results?.map((tool) => `${tool.tool_name || "tool"}:${tool.status || "-"}`).join("，") || "-"}
+- degraded: ${diagnostics?.trace?.degraded ? `true（failure_stage=${diagnostics.trace.failure_stage}）` : "false"}
 `;
 
   if (!includeInternalDiagnostics) {
@@ -1753,6 +1839,6 @@ ${diagnostics?.final_prompt || "-"}
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
+  return errorMessage(error, fallback);
 }
 

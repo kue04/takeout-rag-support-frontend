@@ -5,24 +5,17 @@ import type {
   ExamplesByCategoryResponse,
 } from "../types/api";
 
-const exampleReadHeaders = {
-  "X-Operator-Id": "knowledge_ops_demo",
-  "X-User-Role": "knowledge_ops",
-};
-
+/** 种子 FAQ 浏览。需要 `read:example_read` —— **agent 角色没有这个 scope**。 */
 export async function getCategories(): Promise<CategoriesResponse> {
-  return apiRequest<CategoriesResponse>("/examples/categories", {
-    headers: exampleReadHeaders,
-  });
+  return apiRequest<CategoriesResponse>("/examples/categories");
 }
 
 export async function getExamplesByCategory(
   category: string,
   limit: number,
 ): Promise<ExamplesByCategoryResponse> {
-  const query = new URLSearchParams({ category, limit: String(limit) });
-  return apiRequest<ExamplesByCategoryResponse>(`/examples/by-category?${query}`, {
-    headers: exampleReadHeaders,
+  return apiRequest<ExamplesByCategoryResponse>("/examples/by-category", {
+    query: { category, limit },
   });
 }
 
@@ -32,10 +25,6 @@ export async function searchExamples(
 ): Promise<ExampleSearchResponse> {
   return apiRequest<ExampleSearchResponse, { keyword: string; limit: number }>(
     "/examples/search",
-    {
-      method: "POST",
-      body: { keyword, limit },
-      headers: exampleReadHeaders,
-    },
+    { method: "POST", body: { keyword, limit } },
   );
 }
