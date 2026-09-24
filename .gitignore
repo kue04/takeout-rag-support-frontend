@@ -4,3 +4,6 @@ dist/
 .env
 .env.*
 !.env.example
+# 生产构建配置：只含「留空 = 走同源」这类非秘密声明，必须进仓库。
+# 否则 CI / 服务器上构建时会回落到 .env.local 里的本机地址，被烧进产物（踩坑 C8）。
+!.env.production
